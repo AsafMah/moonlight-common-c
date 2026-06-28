@@ -1053,6 +1053,14 @@ static bool sendMessageEnet(short ptype, int paylen, const void* payload, uint8_
         PltLockMutex(&enetMutex);
     }
 
+    // The callers' unlocked connection checks are only a fast path. stopControlStream()
+    // tears down peer and client while holding enetMutex, so check again here.
+    if (stopping || peer == NULL) {
+        enet_packet_destroy(enetPacket);
+        PltUnlockMutex(&enetMutex);
+        return false;
+    }
+
     volatile bool packetFreed = false;
 
     // Set a callback to use to let us know if the packet has been freed.
@@ -1088,11 +1096,17 @@ static bool sendMessageEnet(short ptype, int paylen, const void* payload, uint8_
                 PltSleepMs(1);
                 PltLockMutex(&enetMutex);
 
+                // Teardown may have started or completed while we slept. If it
+                // completed, peer and client are gone and the packet was freed.
+                if (stopping || peer == NULL) {
+                    break;
+                }
+
                 // Try to send the packet again
                 err = enet_host_service(client, NULL, 0);
             }
 
-            if (err >= 0 && peer->state == ENET_PEER_STATE_CONNECTED && !packetFreed && !isPacketSentWaitingForAck(enetPacket)) {
+            if (err >= 0 && peer != NULL && peer->state == ENET_PEER_STATE_CONNECTED && !packetFreed && !isPacketSentWaitingForAck(enetPacket)) {
                 Limelog("Control message took over 10 ms to send (net latency: %u ms | packet loss: %f%%)\n",
                         peer->roundTripTime, peer->packetLoss / (float)ENET_PEER_PACKET_LOSS_SCALE);
             }
@@ -2141,6 +2155,10 @@ int stopControlStream(void) {
         PltJoinThread(&invalidateRefFramesThread);
     }
 
+    // Hold enetMutex for the whole ENet teardown so a concurrent LiSend*() caller
+    // either completes before the linger starts or sees peer == NULL afterwards.
+    // Such a caller may block for up to the linger timeout.
+    PltLockMutex(&enetMutex);
     if (peer != NULL) {
         // Gracefully disconnect to ensure the remote host receives all of our final
         // outbound traffic, including any key up events that might be sent.
@@ -2151,6 +2169,7 @@ int stopControlStream(void) {
         enet_host_destroy(client);
         client = NULL;
     }
+    PltUnlockMutex(&enetMutex);
 
     if (ctlSock != INVALID_SOCKET) {
         closeSocket(ctlSock);
