@@ -1354,6 +1354,7 @@ void LiRequestIdrFrame(void);
 #define LI_FF_DS5_HAPTICS_PCM         0x80 // Host can stream authored DualSense stereo PCM
 #define LI_FF_REMOTE_TEXT_CONTEXT     0x200 // Host can send InputPane/UIA text context updates
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
+#define LI_FF_CLIENT_RESOLUTION_CHANGE 0x400 // LiSendResolutionChangeRequest() supported
 uint32_t LiGetHostFeatureFlags(void);
 
 // Returns true if the host offered PyroWave in its RTSP DESCRIBE response for
@@ -1376,6 +1377,20 @@ bool LiGetHostPyrowaveCapabilities(LI_PYROWAVE_CAPABILITIES* capabilities);
 #define LI_DYNAMIC_SDR_WHITE_ERR_NOT_CONNECTED -3
 #define LI_DYNAMIC_SDR_WHITE_ERR_SEND_FAILED   -4
 int LiSendClientSdrWhiteNits(float nits);
+
+// Ask the host to switch the stream to width x height physical pixels (Sunshine
+// dynamic parameter change 0x5506, RESOLUTION). This is only supported when the
+// host advertises LI_FF_CLIENT_RESOLUTION_CHANGE in LiGetHostFeatureFlags().
+// Odd dimensions are rounded down to even. The host validates and applies the
+// mode, then reports the resolution it actually applied via the resolutionChanged
+// listener callback. Debounce calls (e.g. during a live window resize) to avoid
+// flooding the host with mode changes.
+#define LI_RESOLUTION_CHANGE_OK                 0
+#define LI_RESOLUTION_CHANGE_ERR_INVALID       -1 // < 2 or > 16384 after rounding
+#define LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED   -2 // Host lacks LI_FF_CLIENT_RESOLUTION_CHANGE
+#define LI_RESOLUTION_CHANGE_ERR_NOT_CONNECTED -3
+#define LI_RESOLUTION_CHANGE_ERR_SEND_FAILED   -4
+int LiSendResolutionChangeRequest(unsigned int width, unsigned int height);
 
 // Select whether Sunshine composites the cursor into the video frame or sends
 // cursor shape updates for local rendering. This is only supported when the

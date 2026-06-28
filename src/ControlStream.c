@@ -2228,6 +2228,36 @@ int LiSendClientSdrWhiteNits(float nits) {
     return LI_DYNAMIC_SDR_WHITE_OK;
 }
 
+int LiSendResolutionChangeRequest(unsigned int width, unsigned int height) {
+    uint32_t payload[3];
+
+    // Encoders need even dimensions, so round down rather than reject odd sizes.
+    width &= ~1u;
+    height &= ~1u;
+    if (width < 2 || width > 16384 || height < 2 || height > 16384) {
+        return LI_RESOLUTION_CHANGE_ERR_INVALID;
+    }
+    if ((SunshineFeatureFlags & LI_FF_CLIENT_RESOLUTION_CHANGE) == 0 ||
+            AppVersionQuad[0] < 5 || packetTypes == NULL ||
+            packetTypes[IDX_DYNAMIC_PARAM_CHANGE] == -1) {
+        return LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED;
+    }
+    if (peer == NULL || peer->state != ENET_PEER_STATE_CONNECTED) {
+        return LI_RESOLUTION_CHANGE_ERR_NOT_CONNECTED;
+    }
+
+    // Same layout the receive path parses for an inbound 0x5506 RESOLUTION message.
+    payload[0] = LE32(SS_DYNAMIC_PARAM_TYPE_RESOLUTION);
+    payload[1] = LE32(width);
+    payload[2] = LE32(height);
+    if (!sendMessageAndForget(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], sizeof(payload), payload,
+                              CTRL_CHANNEL_GENERIC, ENET_PACKET_FLAG_RELIABLE, false)) {
+        return LI_RESOLUTION_CHANGE_ERR_SEND_FAILED;
+    }
+
+    return LI_RESOLUTION_CHANGE_OK;
+}
+
 int LiSetCursorMode(int cursorMode) {
     uint8_t payload[4] = { CURSOR_STREAM_PROTOCOL_VERSION, 0, 0, 0 };
 

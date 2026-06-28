@@ -180,6 +180,16 @@ if (BUILD_TESTING)
       target_compile_options(controller-handoff-queue-tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME controller-handoff-queue-tests COMMAND controller-handoff-queue-tests)
+    # Includes ControlStream.c to drive LiSendResolutionChangeRequest() over loopback ENet.
+    add_executable(resolution-change-request-tests tests/ResolutionChangeRequestTest.c)
+    target_include_directories(resolution-change-request-tests PRIVATE
+      enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(resolution-change-request-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_DEFINITIONS>)
+    target_compile_options(resolution-change-request-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
+    target_link_libraries(resolution-change-request-tests PRIVATE moonlight-common-c)
+    add_test(NAME resolution-change-request-tests COMMAND resolution-change-request-tests)
     add_executable(pyrowave-decode-unit-tests tests/PyrowaveDecodeUnitTest.c)
     target_include_directories(pyrowave-decode-unit-tests PRIVATE
       enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
