@@ -204,6 +204,16 @@ if (BUILD_TESTING)
       $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
     target_link_libraries(pyrowave-decode-unit-tests PRIVATE moonlight-common-c)
     add_test(NAME pyrowave-decode-unit-tests COMMAND pyrowave-decode-unit-tests)
+    # Includes ControlStream.c to race a sender against stopControlStream().
+    add_executable(control-stream-teardown-tests tests/ControlStreamTeardownTest.c)
+    target_include_directories(control-stream-teardown-tests PRIVATE
+      enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(control-stream-teardown-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_DEFINITIONS>)
+    target_compile_options(control-stream-teardown-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
+    target_link_libraries(control-stream-teardown-tests PRIVATE moonlight-common-c)
+    add_test(NAME control-stream-teardown-tests COMMAND control-stream-teardown-tests)
   endif()
 
   add_executable(control-stream-packet-tests
