@@ -1309,6 +1309,11 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
             pyrowaveServerCapabilities.payloadVersion = (uint16_t)pyrowavePayloadVersion;
             pyrowaveServerCapabilities.capabilityFlags = pyrowaveCapabilities;
             pyrowaveServerCapabilities.maxPacketSize = pyrowaveMaxPacketSize;
+
+            // Keep the host's offer for LiGetHostPyrowaveCapabilities(), even if
+            // this client doesn't request PyroWave or negotiation fails below.
+            HostPyrowaveCapabilities = pyrowaveServerCapabilities;
+            HostPyrowaveOffered = true;
         }
         pyrowaveClientCapabilities.protocolVersion = LI_PYROWAVE_PROTOCOL_VERSION;
         pyrowaveClientCapabilities.bitstreamVersion = LI_PYROWAVE_BITSTREAM_VERSION;

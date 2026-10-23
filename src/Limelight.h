@@ -1343,6 +1343,16 @@ void LiRequestIdrFrame(void);
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
 uint32_t LiGetHostFeatureFlags(void);
 
+// Returns true if the host offered PyroWave in its RTSP DESCRIBE response for
+// the current connection, and copies the offer into capabilities (if non-NULL).
+// The offer is reported even when another codec was negotiated, so clients can
+// learn that a host supports PyroWave without requesting it. Values are the
+// host's as sent; compare them against LI_PYROWAVE_* to judge compatibility.
+// Valid after LiStartConnection() completes the RTSP handshake and until the
+// next LiStartConnection(). Returns false (and zeroes capabilities) otherwise.
+#define LI_PYROWAVE_HAS_HOST_CAPABILITIES_QUERY 1
+bool LiGetHostPyrowaveCapabilities(LI_PYROWAVE_CAPABILITIES* capabilities);
+
 // Update the client's SDR reference white (50-1000 nits inclusive) during an
 // encrypted Sunshine HLG session. This changes only the supported host
 // conversion path; it does not reconfigure the host display, VDD HDR

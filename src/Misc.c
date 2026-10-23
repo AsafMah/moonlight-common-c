@@ -161,6 +161,20 @@ uint32_t LiGetHostFeatureFlags(void) {
     return SunshineFeatureFlags;
 }
 
+bool LiGetHostPyrowaveCapabilities(LI_PYROWAVE_CAPABILITIES* capabilities) {
+    if (!HostPyrowaveOffered) {
+        if (capabilities != NULL) {
+            memset(capabilities, 0, sizeof(*capabilities));
+        }
+        return false;
+    }
+
+    if (capabilities != NULL) {
+        *capabilities = HostPyrowaveCapabilities;
+    }
+    return true;
+}
+
 int LiGetNegotiatedAudioCodec(void) {
     return NegotiatedAudioCodec;
 }

@@ -28,6 +28,9 @@ extern ConnListenerRemoteTextContext RemoteTextContextCallback;
 extern DECODER_RENDERER_CALLBACKS VideoCallbacks;
 extern AUDIO_RENDERER_CALLBACKS AudioCallbacks;
 extern int NegotiatedVideoFormat;
+// PyroWave offer parsed from the host's RTSP DESCRIBE, whichever codec is negotiated.
+extern bool HostPyrowaveOffered;
+extern LI_PYROWAVE_CAPABILITIES HostPyrowaveCapabilities;
 extern volatile bool ConnectionInterrupted;
 extern bool HighQualitySurroundSupported;
 extern bool HighQualitySurroundEnabled;
