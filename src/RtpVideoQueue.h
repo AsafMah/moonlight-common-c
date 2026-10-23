@@ -37,6 +37,7 @@ typedef struct _RTP_VIDEO_QUEUE {
     uint32_t missingPackets; // # of holes behind receivedHighestSequenceNumber
     bool useFastQueuePath;
     bool reportedLostFrame;
+    bool fecRecoveredFrame; // FEC rebuilt data in some block of the current frame
 
     uint32_t currentFrameNumber;
 

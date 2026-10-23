@@ -1223,6 +1223,18 @@ const RTP_VIDEO_STATS* LiGetRTPVideoStats(void);
 // active stream. The counter is reset when the video stream is initialized.
 uint64_t LiGetRTPVideoBytesReceived(void);
 
+// Cumulative video FEC results for the active stream, covering both the RTP
+// FEC queue and PyroWave's block-aware parity. The counters are reset when the
+// video stream is initialized, and LiGetRTPVideoFecStats() may be called from
+// any thread. Each field is read atomically, but not as one snapshot.
+typedef struct _RTP_VIDEO_FEC_STATS {
+    uint64_t framesRecovered;      // frames that were only complete after FEC repaired them
+    uint64_t framesUnrecoverable;  // partly received frames dropped because FEC couldn't repair them
+    uint64_t fecPacketsReceived;   // FEC (parity) packets received
+} RTP_VIDEO_FEC_STATS, *PRTP_VIDEO_FEC_STATS;
+
+void LiGetRTPVideoFecStats(PRTP_VIDEO_FEC_STATS stats);
+
 // Returns the percentage of video frames lost by the network during the most
 // recent connection-status sampling interval. Decoder and renderer drops are
 // not included. The value is updated every 3 seconds after the stream settles.

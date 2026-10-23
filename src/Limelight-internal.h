@@ -151,6 +151,7 @@ void connectionSawFrame(uint32_t frameIndex);
 void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus);
 extern bool VideoFecControlSupported;
 void connectionRecordFecBlock(uint32_t frame, uint8_t block, uint16_t data, uint16_t received);
+void recordVideoFecStats(uint32_t framesRecovered, uint32_t framesUnrecoverable, uint32_t fecPacketsReceived);
 int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags, bool moreData);
 void flushInputOnControlStream(void);
 bool isControlDataInTransit(void);

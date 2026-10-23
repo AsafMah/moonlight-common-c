@@ -59,6 +59,11 @@ typedef struct _LI_PYROWAVE_REASSEMBLY_STATE {
     uint8_t** fecParityBlocks;
     uint16_t* fecParityLengths;
     uint8_t* fecParityReceived;
+    /* Data blocks of the current frame rebuilt from parity. */
+    uint16_t fecRecoveredCount;
+    /* Totals since initialization; Reset and new frames keep them. */
+    uint32_t fecParityPacketsReceived;
+    uint32_t incompleteFramesDropped;
 } LI_PYROWAVE_REASSEMBLY_STATE;
 
 /* A zero maxFrameSize selects LI_PYROWAVE_DEFAULT_MAX_FRAME_SIZE. */

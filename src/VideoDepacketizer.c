@@ -37,6 +37,8 @@ static LINKED_BLOCKING_QUEUE decodeUnitQueue;
 
 static uint64_t pyrowaveLastFailureLogUs;
 static LI_PYROWAVE_REASSEMBLY_RESULT pyrowaveLastFailureResult;
+static uint32_t pyrowaveReportedFecParityPackets;
+static uint32_t pyrowaveReportedIncompleteFrames;
 
 static void logPyrowaveReassemblyFailure(
         LI_PYROWAVE_REASSEMBLY_RESULT result,
@@ -113,6 +115,8 @@ void initializeVideoDepacketizer(int pktSize) {
     idrFrameProcessed = false;
     pyrowaveLastFailureLogUs = 0;
     pyrowaveLastFailureResult = LI_PYROWAVE_REASSEMBLY_ACCEPTED;
+    pyrowaveReportedFecParityPackets = 0;
+    pyrowaveReportedIncompleteFrames = 0;
     LiPyrowaveReassemblyInitialize(&pyrowaveReassembly, 0);
     strictIdrFrameWait = NegotiatedVideoFormat != VIDEO_FORMAT_PYROWAVE &&
                          !isReferenceFrameInvalidationEnabled();
@@ -771,6 +775,18 @@ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offse
     }
 }
 
+// Forward new PyroWave parity and incomplete-frame totals to the video FEC stats
+static void reportPyrowaveFecStats(void) {
+    const uint32_t parityPackets = pyrowaveReassembly.fecParityPacketsReceived;
+    const uint32_t incompleteFrames = pyrowaveReassembly.incompleteFramesDropped;
+
+    recordVideoFecStats(0,
+                        incompleteFrames - pyrowaveReportedIncompleteFrames,
+                        parityPackets - pyrowaveReportedFecParityPackets);
+    pyrowaveReportedFecParityPackets = parityPackets;
+    pyrowaveReportedIncompleteFrames = incompleteFrames;
+}
+
 static bool queueOwnedFrame(uint8_t* data, size_t length, size_t metadataLength) {
     PLENTRY_INTERNAL entry;
     PYROWAVE_FRAME_ENTRY* ownedFrame;
@@ -1298,6 +1314,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
            frame's EOF arrives (or when that EOF packet was lost). */
         decodingFrame = false;
         nextFrameNumber = frameIndex + 1;
+        const bool fecRecovered = pyrowaveReassembly.fecRecoveredCount != 0;
 
         frameSize = pyrowaveReassembly.totalPayloadLength;
         frameData = (uint8_t*)malloc(sizeof(PYROWAVE_FRAME_ENTRY) + frameSize);
@@ -1335,6 +1352,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
         }
 
         LiPyrowaveReassemblyReset(&pyrowaveReassembly);
+        if (fecRecovered) {
+            recordVideoFecStats(1, 0, 0);
+        }
         frameType = FRAME_TYPE_IDR;
         waitingForIdrFrame = false;
         waitingForRefInvalFrame = false;
@@ -1536,6 +1556,10 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
                       queueEntry.presentationTimeUs,
                       queueEntry.rtpTimestamp,
                       &existingEntry);
+
+    if (NegotiatedVideoFormat == VIDEO_FORMAT_PYROWAVE) {
+        reportPyrowaveFecStats();
+    }
 
     if (existingEntry != NULL) {
         // processRtpPayload didn't want this packet, so just free it

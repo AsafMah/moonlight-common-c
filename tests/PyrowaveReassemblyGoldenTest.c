@@ -278,6 +278,8 @@ int main(void) {
         size_t lengths[4] = { 0 };
         LI_PYROWAVE_PACKET_HEADER headers[4] = { 0 };
         const uint8_t *payloads[4] = { data0, data1, data2, parity };
+        const uint32_t parityPacketsBefore = state.fecParityPacketsReceived;
+        const uint32_t incompleteFramesBefore = state.incompleteFramesDropped;
         size_t index;
 
         for (index = 0; index < 4; ++index) {
@@ -313,12 +315,29 @@ int main(void) {
               LI_PYROWAVE_REASSEMBLY_ACCEPTED);
         CHECK(LiPyrowaveReassemblyPushPacket(&state, packets[0], lengths[0], 920, 2000) ==
               LI_PYROWAVE_REASSEMBLY_COMPLETE);
+        CHECK(state.fecRecoveredCount == 1);
+        CHECK(state.fecParityPacketsReceived == parityPacketsBefore + 1);
         CHECK(LiPyrowaveReassemblyCopyFrame(
                   &state, output, sizeof(output), &outputLength, &frameId) ==
               LI_PYROWAVE_REASSEMBLY_COMPLETE);
         CHECK(outputLength == 15);
         CHECK(frameId == 20);
         CHECK(output[0] == 1 && output[5] == 6 && output[14] == 15);
+        /* A delivered frame isn't counted as dropped, and the next frame
+           starts with no recovered blocks. */
+        CHECK(state.fecRecoveredCount == 0);
+        CHECK(state.incompleteFramesDropped == incompleteFramesBefore);
+
+        /* Dropping a partial frame is counted; totals survive the reset. */
+        headers[2].frameId = 21;
+        CHECK(LiPyrowaveBuildPacket(
+                  &headers[2], payloads[2], 5, packets[2],
+                  sizeof(packets[2]), &lengths[2]) == LI_PYROWAVE_PACKET_OK);
+        CHECK(LiPyrowaveReassemblyPushPacket(&state, packets[2], lengths[2], 930, 2000) ==
+              LI_PYROWAVE_REASSEMBLY_ACCEPTED);
+        LiPyrowaveReassemblyReset(&state);
+        CHECK(state.incompleteFramesDropped == incompleteFramesBefore + 1);
+        CHECK(state.fecParityPacketsReceived == parityPacketsBefore + 1);
     }
     LiPyrowaveReassemblyDestroy(&state);
     puts("pyrowave reassembly golden vectors passed");
