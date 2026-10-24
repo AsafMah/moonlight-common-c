@@ -1233,6 +1233,7 @@ typedef struct _RTP_VIDEO_FEC_STATS {
     uint64_t fecPacketsReceived;   // FEC (parity) packets received
 } RTP_VIDEO_FEC_STATS, *PRTP_VIDEO_FEC_STATS;
 
+#define LI_HAS_RTP_VIDEO_FEC_STATS 1
 void LiGetRTPVideoFecStats(PRTP_VIDEO_FEC_STATS stats);
 
 // Returns the percentage of video frames lost by the network during the most
