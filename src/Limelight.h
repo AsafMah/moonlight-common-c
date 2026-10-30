@@ -743,6 +743,16 @@ void LiInitializeConnectionCallbacks(PCONNECTION_LISTENER_CALLBACKS clCallbacks)
 // LiStartConnection(). This function is not thread-safe.
 void LiSetRemoteTextContextCallback(ConnListenerRemoteTextContext callback);
 
+// Optional absolute actuator controls accompanying authored PCM. State is eight
+// bytes: mode0, mode2, known controls, right/left motor, power-save, reduction, LPF.
+// Called synchronously on the control receive thread. The state buffer is valid
+// only during this callback; copy all eight bytes before deferring processing.
+typedef void(*ConnListenerDs5HapticsState)(uint16_t controllerNumber, const uint8_t* state);
+
+// Register before LiStartConnection(), while no connection is running. This
+// function is not thread-safe. Pass NULL to unregister before the next connection.
+void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback);
+
 // ServerCodecModeSupport values
 #define SCM_H264            0x00000001
 #define SCM_HEVC            0x00000100
@@ -1108,6 +1118,18 @@ int LiSendControllerTouchEvent2(uint8_t controllerNumber, uint8_t eventType, uin
 #define LI_MOTION_TYPE_ACCEL 0x01
 #define LI_MOTION_TYPE_GYRO  0x02
 int LiSendControllerMotionEvent(uint8_t controllerNumber, uint8_t motionType, float x, float y, float z);
+
+// Atomically enqueue one source frame using the existing per-sensor wire format.
+// If both sensors are requested, either both vectors are queued or neither is.
+// Controller numbers outside 0..15 are rejected.
+// Rejection leaves queued motion unchanged. The platform owning this source must
+// explicitly request a stop if its final zero frame is rejected.
+int LiSendControllerMotionFrame(uint8_t controllerNumber, float gx, float gy, float gz, float ax, float ay, float az);
+// Immediately discard queued old gyro motion and send a reliable zero from the input thread.
+// A new accepted gyro supersedes an unsent stop. No allocation or timer is needed for a stop.
+int LiStopControllerMotionEvent(uint8_t controllerNumber);
+// Retire queued source data; preserve demand on replacement, clear it when the host slot is removed.
+int LiResetControllerMotionEvents(uint8_t controllerNumber, bool clearDemand);
 
 // This function allows clients to send controller battery state to a supported host. If the
 // host can adjust battery state on the emulated controller, it can use this information to

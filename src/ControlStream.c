@@ -2,11 +2,18 @@
 #include "ControlStreamPacket.h"
 #include "CursorStream.h"
 #include "Ds5HapticsStream.h"
+#include "Ds5HapticsStateStream.h"
 #include "Ds5HapticsIrStream.h"
 #include "RemoteTextContextStream.h"
 
 #include <math.h>
 #include <stdatomic.h>
+
+ConnListenerDs5HapticsState Ds5HapticsStateCallback;
+
+void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback) {
+    Ds5HapticsStateCallback = callback;
+}
 
 // This is a private header, but it just contains some time macros
 #include <enet/time.h>
@@ -1404,6 +1411,10 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
         BbGet16(&bb, &queuedCb->data.setMotionEventState.reportRateHz);
         BbGet8(&bb, &queuedCb->data.setMotionEventState.motionType);
 
+        // Remote demand must not depend on a delayed or full platform callback queue.
+        setControllerMotionEnabled(queuedCb->data.setMotionEventState.controllerNumber,
+                                   queuedCb->data.setMotionEventState.motionType,
+                                   queuedCb->data.setMotionEventState.reportRateHz > 0);
         queuedCb->typeIndex = IDX_SET_MOTION_EVENT;
     }
     else if (ctlHdr->type == packetTypes[IDX_SET_RGB_LED]) {
@@ -1740,6 +1751,15 @@ static void controlReceiveThreadFunc(void* context) {
                 if (packetLength > (int)sizeof(*ctlHdr)) {
                     processCursorUpdate((const char*)(ctlHdr + 1),
                                         packetLength - (int)sizeof(*ctlHdr));
+                }
+            }
+            else if (ctlHdr->type == 0x550D) {
+                uint16_t controller;
+                const uint8_t* state;
+                if (Ds5HapticsStateCallback != NULL && parseDs5HapticsState(
+                        (const uint8_t*)(ctlHdr + 1), packetLength - (int)sizeof(*ctlHdr),
+                        &controller, &state)) {
+                    Ds5HapticsStateCallback(controller, state);
                 }
             }
             else if (ctlHdr->type == packetTypes[IDX_DS5_HAPTICS_PCM]) {

@@ -1,8 +1,10 @@
 #include "Limelight-internal.h"
+#include <stdatomic.h>
 
 static SOCKET inputSock = INVALID_SOCKET;
 static unsigned char currentAesIv[16];
 static bool initialized;
+static atomic_bool motionStateReady;
 static bool encryptedControlStream;
 static bool needsBatchedScroll;
 static int batchedScrollDelta;
@@ -30,6 +32,8 @@ static uint8_t currentTouchpadButtonState;
 #define INPUT_STREAM_TIMEOUT_SEC 10
 
 #define MAX_QUEUED_INPUT_PACKETS 150
+// Keep the old motion queue's maximum footprint; buttons/releases retain queue capacity.
+#define MAX_QUEUED_MOTION_PACKETS (MAX_GAMEPADS * MAX_MOTION_EVENTS)
 
 #define PAYLOAD_SIZE(x) BE32((x)->packet.header.size)
 #define PACKET_SIZE(x) (PAYLOAD_SIZE(x) + sizeof(uint32_t))
@@ -53,6 +57,7 @@ typedef struct _PACKET_HOLDER {
     LINKED_BLOCKING_QUEUE_ENTRY entry;
     uint32_t enetPacketFlags;
     uint8_t channelId;
+    uint64_t motionSequence;
 
     // The union must be the last member since we abuse the NV_UNICODE_PACKET
     // text field to store variable length data which gets split before being
@@ -83,9 +88,14 @@ typedef struct _PACKET_HOLDER {
 static PLT_MUTEX batchedInputMutex;
 static PPACKET_HOLDER currentQueuedControllerPacket[MAX_GAMEPADS];
 static struct {
-    float x, y, z;
-    bool dirty; // Update ready to send (queued packet holder in packetQueue)
+    bool enabled;
+    bool mayBeMoving;
+    bool stopPending;
+    uint64_t sequence;
+    uint64_t discardThrough;
 } currentGamepadSensorState[MAX_GAMEPADS][MAX_MOTION_EVENTS];
+static uint16_t pendingGyroStops;
+static int queuedMotionPackets;
 static struct {
     int deltaX, deltaY;
     bool dirty; // Update ready to send (queued packet holder in packetQueue)
@@ -124,9 +134,12 @@ int initializeInputStream(void) {
     absCurrentPosX = absCurrentPosY = 0.5f;
 
     memset(currentGamepadSensorState, 0, sizeof(currentGamepadSensorState));
+    pendingGyroStops = 0;
+    queuedMotionPackets = 0;
     memset(&currentRelativeMouseState, 0, sizeof(currentRelativeMouseState));
     memset(&currentAbsoluteMouseState, 0, sizeof(currentAbsoluteMouseState));
     PltCreateMutex(&batchedInputMutex);
+    atomic_store(&motionStateReady, true);
 
     return 0;
 }
@@ -134,6 +147,7 @@ int initializeInputStream(void) {
 // Destroys and cleans up the input stream
 void destroyInputStream(void) {
     PLINKED_BLOCKING_QUEUE_ENTRY entry, nextEntry;
+    atomic_store(&motionStateReady, false);
 
     PltDestroyCryptoContext(cryptoContext);
 
@@ -324,6 +338,84 @@ static void floatToNetfloat(float in, netfloat out) {
     }
 }
 
+static void initializeMotionPacket(PPACKET_HOLDER holder, uint8_t controller, uint8_t type,
+                                  float x, float y, float z) {
+    holder->channelId = CTRL_CHANNEL_SENSOR_BASE + controller;
+    holder->enetPacketFlags = type == LI_MOTION_TYPE_GYRO && x == 0 && y == 0 && z == 0
+        ? ENET_PACKET_FLAG_RELIABLE : 0;
+    holder->packet.controllerMotion.header.size = BE32(sizeof(SS_CONTROLLER_MOTION_PACKET) - sizeof(uint32_t));
+    holder->packet.controllerMotion.header.magic = LE32(SS_CONTROLLER_MOTION_MAGIC);
+    holder->packet.controllerMotion.controllerNumber = controller;
+    holder->packet.controllerMotion.motionType = type;
+    memset(holder->packet.controllerMotion.zero, 0, sizeof(holder->packet.controllerMotion.zero));
+    floatToNetfloat(x, holder->packet.controllerMotion.x);
+    floatToNetfloat(y, holder->packet.controllerMotion.y);
+    floatToNetfloat(z, holder->packet.controllerMotion.z);
+}
+
+// Caller holds batchedInputMutex. Stops use a fixed slot, even when the input queue is full.
+static void stopControllerMotionLocked(uint8_t controller) {
+    if (!currentGamepadSensorState[controller][1].mayBeMoving ||
+        currentGamepadSensorState[controller][1].stopPending) return;
+    currentGamepadSensorState[controller][1].discardThrough = ++currentGamepadSensorState[controller][1].sequence;
+    currentGamepadSensorState[controller][1].stopPending = true;
+    pendingGyroStops |= 1u << controller;
+    LbqSignalQueueUserWake(&packetQueue);
+}
+
+static bool takePendingMotionStop(PPACKET_HOLDER holder) {
+    bool found = false;
+    PltLockMutex(&batchedInputMutex);
+    for (uint8_t i = 0; i < MAX_GAMEPADS; i++) {
+        if (pendingGyroStops & (1u << i)) {
+            pendingGyroStops &= ~(1u << i);
+            initializeMotionPacket(holder, i, LI_MOTION_TYPE_GYRO, 0, 0, 0);
+            holder->motionSequence = currentGamepadSensorState[i][1].sequence;
+            found = true;
+            break;
+        }
+    }
+    PltUnlockMutex(&batchedInputMutex);
+    return found;
+}
+
+static bool prepareQueuedMotionPacket(PPACKET_HOLDER holder) {
+    uint8_t controller = holder->packet.controllerMotion.controllerNumber;
+    uint8_t sensor = holder->packet.controllerMotion.motionType - 1;
+    bool current;
+    PltLockMutex(&batchedInputMutex);
+    LC_ASSERT(queuedMotionPackets > 0);
+    queuedMotionPackets--;
+    current = currentGamepadSensorState[controller][sensor].enabled &&
+        holder->motionSequence > currentGamepadSensorState[controller][sensor].discardThrough;
+    if (current && sensor == 1 && holder->motionSequence == currentGamepadSensorState[controller][sensor].sequence &&
+        holder->enetPacketFlags == ENET_PACKET_FLAG_RELIABLE) {
+        currentGamepadSensorState[controller][sensor].mayBeMoving = false;
+    }
+    PltUnlockMutex(&batchedInputMutex);
+    return current;
+}
+
+static bool motionStopIsCurrent(PPACKET_HOLDER holder) {
+    uint8_t controller = holder->packet.controllerMotion.controllerNumber;
+    bool current;
+    PltLockMutex(&batchedInputMutex);
+    current = currentGamepadSensorState[controller][1].stopPending &&
+        holder->motionSequence == currentGamepadSensorState[controller][1].sequence;
+    PltUnlockMutex(&batchedInputMutex);
+    return current;
+}
+
+static void finishMotionStop(PPACKET_HOLDER holder) {
+    uint8_t controller = holder->packet.controllerMotion.controllerNumber;
+    PltLockMutex(&batchedInputMutex);
+    if (holder->motionSequence == currentGamepadSensorState[controller][1].sequence) {
+        currentGamepadSensorState[controller][1].stopPending = false;
+        currentGamepadSensorState[controller][1].mayBeMoving = false;
+    }
+    PltUnlockMutex(&batchedInputMutex);
+}
+
 static uint16_t normalizedFloatToUint16(float in) {
     float clamped = CLAMP(in, 0.0f, 1.0f);
     return (uint16_t)(clamped * 65535.0f + 0.5f);
@@ -380,7 +472,15 @@ static void inputSendThreadProc(void* context) {
     uint64_t lastTouchpadFlushTime = 0;
 
     while (!PltIsThreadInterrupted(&inputSendThread)) {
+        PACKET_HOLDER stop;
+        while (takePendingMotionStop(&stop)) {
+            if (motionStopIsCurrent(&stop)) {
+                if (!sendInputPacket(&stop, false)) return;
+                finishMotionStop(&stop);
+            }
+        }
         err = LbqWaitForQueueElement(&packetQueue, (void**)&holder);
+        if (err == LBQ_USER_WAKE) continue;
         if (err != LBQ_SUCCESS) {
             return;
         }
@@ -553,41 +653,13 @@ static void inputSendThreadProc(void* context) {
 
             lastPenPacketTime = now;
         }
-        // If it's a motion packet, only send the latest for each sensor type
+        // Motion values are immutable after enqueue, including ordinary zero samples.
         else if (holder->packet.header.magic == LE32(SS_CONTROLLER_MOTION_MAGIC)) {
-            uint8_t controllerNumber = holder->packet.controllerMotion.controllerNumber;
-            uint8_t motionType = holder->packet.controllerMotion.motionType;
-
-            LC_ASSERT(controllerNumber < MAX_GAMEPADS);
-            LC_ASSERT(motionType - 1 < MAX_MOTION_EVENTS);
-
-            PltLockMutex(&batchedInputMutex);
-
-            // LI_MOTION_TYPE_* values are 1-based, so we have to subtract 1 to index into our state array
-            float x = currentGamepadSensorState[controllerNumber][motionType - 1].x;
-            float y = currentGamepadSensorState[controllerNumber][motionType - 1].y;
-            float z = currentGamepadSensorState[controllerNumber][motionType - 1].z;
-
-            // Motion events are so rapid that we can just drop any events that are lost in transit,
-            // but we will treat (0, 0, 0) as a special value for gyro events to allow clients to
-            // reliably set the gyro to a null state when sensor events are halted due to focus loss
-            // or similar client-side constraints.
-            if (motionType == LI_MOTION_TYPE_GYRO && x == 0.0f && y == 0.0f && z == 0.0f) {
-                holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
+            if (!prepareQueuedMotionPacket(holder)) {
+                freePacketHolder(holder);
+                if (LbqGetItemCount(&packetQueue) == 0) flushInputOnControlStream();
+                continue;
             }
-            else {
-                holder->enetPacketFlags = 0;
-            }
-
-            // Populate the packet with the latest state
-            floatToNetfloat(x, holder->packet.controllerMotion.x);
-            floatToNetfloat(y, holder->packet.controllerMotion.y);
-            floatToNetfloat(z, holder->packet.controllerMotion.z);
-
-            // The state change is no longer pending
-            currentGamepadSensorState[controllerNumber][motionType - 1].dirty = false;
-
-            PltUnlockMutex(&batchedInputMutex);
         }
         // If it's a UTF-8 text packet, we may need to split it into a several packets to send
         else if (holder->packet.header.magic == LE32(UTF8_TEXT_EVENT_MAGIC)) {
@@ -759,6 +831,7 @@ int startInputStream(void) {
 int stopInputStream(void) {
     // No more packets should be queued now
     initialized = false;
+    atomic_store(&motionStateReady, false);
     LbqSignalQueueShutdown(&packetHolderFreeList);
 
     // Signal the input send thread to drain all pending
@@ -1718,75 +1791,137 @@ int LiSendControllerTouchEvent(uint8_t controllerNumber, uint8_t eventType, uint
     return LiSendControllerTouchEvent2(controllerNumber, eventType, 0, pointerId, x, y, pressure);
 }
 
-int LiSendControllerMotionEvent(uint8_t controllerNumber, uint8_t motionType, float x, float y, float z) {
+static void acceptControllerMotionLocked(uint8_t controller, uint8_t type,
+                                        float x, float y, float z) {
+    queuedMotionPackets++;
+    currentGamepadSensorState[controller][type - 1].sequence++;
+    if (type == LI_MOTION_TYPE_GYRO) {
+        pendingGyroStops &= ~(1u << controller);
+        currentGamepadSensorState[controller][1].stopPending = false;
+        currentGamepadSensorState[controller][1].mayBeMoving |= x != 0 || y != 0 || z != 0;
+    }
+}
+
+// Caller holds batchedInputMutex. A failed movement is never retained for later replay.
+static int enqueueControllerMotionLocked(uint8_t controller, uint8_t type,
+                                         float x, float y, float z) {
     PPACKET_HOLDER holder;
     int err;
-
-    if (!initialized) {
-        return -2;
-    }
-
-    // Check for valid motion type values
-    if (motionType - 1 >= MAX_MOTION_EVENTS) {
-        LC_ASSERT(motionType - 1 < MAX_MOTION_EVENTS);
-        return -3;
-    }
-
-    // This is a protocol extension only supported with Sunshine
-    if (!(SunshineFeatureFlags & LI_FF_CONTROLLER_TOUCH_EVENTS)) {
-        return LI_ERR_UNSUPPORTED;
-    }
-
-    // Sunshine supports up to 16 controllers
-    controllerNumber %= MAX_GAMEPADS;
-
-    PltLockMutex(&batchedInputMutex);
-
-    currentGamepadSensorState[controllerNumber][motionType - 1].x = x;
-    currentGamepadSensorState[controllerNumber][motionType - 1].y = y;
-    currentGamepadSensorState[controllerNumber][motionType - 1].z = z;
-
-    // Queue a packet holder if this is the only pending sensor event
-    if (!currentGamepadSensorState[controllerNumber][motionType - 1].dirty) {
-        // Set the dirty flag to claim ownership of inserting the packet holder
-        // and unlock to allow other threads to enqueue or process input.
-        currentGamepadSensorState[controllerNumber][motionType - 1].dirty = true;
-        PltUnlockMutex(&batchedInputMutex);
-
-        holder = allocatePacketHolder(0);
-        if (holder == NULL) {
-            currentGamepadSensorState[controllerNumber][motionType - 1].dirty = false;
-            return -1;
-        }
-
-        // Send each controller on a separate channel specific to motion sensors
-        holder->channelId = CTRL_CHANNEL_SENSOR_BASE + controllerNumber;
-
-        holder->packet.controllerMotion.header.size = BE32(sizeof(SS_CONTROLLER_MOTION_PACKET) - sizeof(uint32_t));
-        holder->packet.controllerMotion.header.magic = LE32(SS_CONTROLLER_MOTION_MAGIC);
-        holder->packet.controllerMotion.controllerNumber = controllerNumber;
-        holder->packet.controllerMotion.motionType = motionType;
-        memset(holder->packet.controllerMotion.zero, 0, sizeof(holder->packet.controllerMotion.zero));
-
-        // Remaining fields are set in the input thread based on the latest currentGamepadSensorState values
-
-        err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
-        if (err != LBQ_SUCCESS) {
-            LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
-            Limelog("Input queue reached maximum size limit\n");
-            freePacketHolder(holder);
-
-            // We weren't able to insert the entry, so let the next call try again
-            currentGamepadSensorState[controllerNumber][motionType - 1].dirty = false;
-        }
+    if (!currentGamepadSensorState[controller][type - 1].enabled) return 0;
+    holder = queuedMotionPackets < MAX_QUEUED_MOTION_PACKETS ? allocatePacketHolder(0) : NULL;
+    if (holder == NULL) {
+        err = -1;
     }
     else {
-        // There's already a packet holder queued to send this event
-        PltUnlockMutex(&batchedInputMutex);
-        err = 0;
+        initializeMotionPacket(holder, controller, type, x, y, z);
+        holder->motionSequence = currentGamepadSensorState[controller][type - 1].sequence + 1;
+        err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
+        if (err != LBQ_SUCCESS) freePacketHolder(holder);
     }
-
+    if (err == LBQ_SUCCESS) {
+        acceptControllerMotionLocked(controller, type, x, y, z);
+    }
     return err;
+}
+
+int LiSendControllerMotionEvent(uint8_t controllerNumber, uint8_t motionType, float x, float y, float z) {
+    int err;
+    if (!initialized) return -2;
+    if (motionType < 1 || motionType > MAX_MOTION_EVENTS) return -3;
+    if (!(SunshineFeatureFlags & LI_FF_CONTROLLER_TOUCH_EVENTS)) return LI_ERR_UNSUPPORTED;
+    controllerNumber %= MAX_GAMEPADS;
+    PltLockMutex(&batchedInputMutex);
+    err = enqueueControllerMotionLocked(controllerNumber, motionType, x, y, z);
+    if (err != LBQ_SUCCESS && motionType == LI_MOTION_TYPE_GYRO && x == 0 && y == 0 && z == 0) {
+        stopControllerMotionLocked(controllerNumber);
+    }
+    PltUnlockMutex(&batchedInputMutex);
+    return err;
+}
+
+int LiSendControllerMotionFrame(uint8_t controller, float gx, float gy, float gz, float ax, float ay, float az) {
+    PPACKET_HOLDER gyro = NULL, accel = NULL;
+    int err = LBQ_SUCCESS;
+    if (!initialized) return -2;
+    if (!(SunshineFeatureFlags & LI_FF_CONTROLLER_TOUCH_EVENTS)) return LI_ERR_UNSUPPORTED;
+    if (controller >= MAX_GAMEPADS) return -3;
+    PltLockMutex(&batchedInputMutex);
+    if (!currentGamepadSensorState[controller][0].enabled || !currentGamepadSensorState[controller][1].enabled) {
+        err = enqueueControllerMotionLocked(controller, LI_MOTION_TYPE_GYRO, gx, gy, gz);
+        if (err == 0) err = enqueueControllerMotionLocked(controller, LI_MOTION_TYPE_ACCEL, ax, ay, az);
+    }
+    else {
+        if (queuedMotionPackets + 2 <= MAX_QUEUED_MOTION_PACKETS) {
+            gyro = allocatePacketHolder(0);
+            accel = allocatePacketHolder(0);
+        }
+        if (gyro) initializeMotionPacket(gyro, controller, LI_MOTION_TYPE_GYRO, gx, gy, gz);
+        if (accel) initializeMotionPacket(accel, controller, LI_MOTION_TYPE_ACCEL, ax, ay, az);
+        if (gyro == NULL || accel == NULL) err = -1;
+        else {
+            gyro->motionSequence = currentGamepadSensorState[controller][1].sequence + 1;
+            accel->motionSequence = currentGamepadSensorState[controller][0].sequence + 1;
+            gyro->entry.data = gyro;
+            gyro->entry.flink = &accel->entry;
+            accel->entry.data = accel;
+            accel->entry.blink = &gyro->entry;
+            err = LbqOfferQueueItems(&packetQueue, &gyro->entry, &accel->entry, 2);
+        }
+        if (err == LBQ_SUCCESS) {
+            acceptControllerMotionLocked(controller, LI_MOTION_TYPE_GYRO, gx, gy, gz);
+            acceptControllerMotionLocked(controller, LI_MOTION_TYPE_ACCEL, ax, ay, az);
+        }
+        else {
+            if (gyro) freePacketHolder(gyro);
+            if (accel) freePacketHolder(accel);
+        }
+    }
+    PltUnlockMutex(&batchedInputMutex);
+    return err;
+}
+
+int LiStopControllerMotionEvent(uint8_t controller) {
+    if (!initialized) return -2;
+    if (controller >= MAX_GAMEPADS) return -3;
+    PltLockMutex(&batchedInputMutex);
+    stopControllerMotionLocked(controller);
+    PltUnlockMutex(&batchedInputMutex);
+    return 0;
+}
+
+int LiResetControllerMotionEvents(uint8_t controller, bool clearDemand) {
+    if (!atomic_load(&motionStateReady)) return -2;
+    if (controller >= MAX_GAMEPADS) return -3;
+    PltLockMutex(&batchedInputMutex);
+    for (int sensor = 0; sensor < MAX_MOTION_EVENTS; sensor++) {
+        currentGamepadSensorState[controller][sensor].discardThrough = ++currentGamepadSensorState[controller][sensor].sequence;
+        if (clearDemand) currentGamepadSensorState[controller][sensor].enabled = false;
+    }
+    if (clearDemand) {
+        pendingGyroStops &= ~(1u << controller);
+        currentGamepadSensorState[controller][1].mayBeMoving = false;
+        currentGamepadSensorState[controller][1].stopPending = false;
+    }
+    else {
+        currentGamepadSensorState[controller][1].stopPending = false;
+        stopControllerMotionLocked(controller);
+    }
+    PltUnlockMutex(&batchedInputMutex);
+    return 0;
+}
+
+// Can arrive before startInputStream(), after the queue and mutex have been initialized.
+int setControllerMotionEnabled(uint16_t controller, uint8_t type, bool enabled) {
+    if (!atomic_load(&motionStateReady)) return -2;
+    if (controller >= MAX_GAMEPADS || type < 1 || type > MAX_MOTION_EVENTS) return -3;
+    PltLockMutex(&batchedInputMutex);
+    currentGamepadSensorState[controller][type - 1].enabled = enabled;
+    if (!enabled) {
+        if (type == LI_MOTION_TYPE_GYRO) stopControllerMotionLocked((uint8_t)controller);
+        else currentGamepadSensorState[controller][0].discardThrough = ++currentGamepadSensorState[controller][0].sequence;
+    }
+    PltUnlockMutex(&batchedInputMutex);
+    return 0;
 }
 
 int LiSendControllerBatteryEvent(uint8_t controllerNumber, uint8_t batteryState, uint8_t batteryPercentage) {

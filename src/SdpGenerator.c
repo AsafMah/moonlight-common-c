@@ -276,6 +276,9 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         uint32_t moonlightFeatureFlags = ML_FF_FEC_STATUS | ML_FF_SESSION_ID_V1;
         if (ListenerCallbacks.ds5HapticsPcm != NULL) {
             moonlightFeatureFlags |= ML_FF_DS5_HAPTICS_PCM;
+            if (Ds5HapticsStateCallback != NULL) {
+                moonlightFeatureFlags |= ML_FF_DS5_HAPTICS_STATE;
+            }
         }
         if (ListenerCallbacks.ds5HapticsIrV2 != NULL) {
             moonlightFeatureFlags |= ML_FF_DS5_HAPTICS_IR_V2;

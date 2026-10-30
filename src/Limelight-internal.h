@@ -114,6 +114,8 @@ extern uint32_t EncryptionFeaturesEnabled;
 #define ML_FF_DS5_HAPTICS_IR_V2 0x08 // Client selected simulated DualSense and accepts authored IR v2
 #define ML_FF_REMOTE_TEXT_CONTEXT 0x10 // Client accepts remote text context updates
 #define ML_FF_PYROWAVE 0x20 // Client accepts the experimental PyroWave video contract
+#define ML_FF_DS5_HAPTICS_STATE 0x40 // Client accepts absolute DS5 actuator controls (0x550D)
+extern ConnListenerDs5HapticsState Ds5HapticsStateCallback;
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 
@@ -181,6 +183,8 @@ int initializeInputStream(void);
 void destroyInputStream(void);
 int startInputStream(void);
 int stopInputStream(void);
+// Only the control stream updates remote demand, before dispatching platform callbacks.
+int setControllerMotionEnabled(uint16_t controller, uint8_t type, bool enabled);
 
 int initializeMicrophoneStream(void);
 void destroyMicrophoneStream(void);
