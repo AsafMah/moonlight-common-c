@@ -1409,6 +1409,7 @@ void LiRequestIdrFrame(void);
 #define LI_FF_DS5_HAPTICS_PCM         0x80 // Host can stream authored DualSense stereo PCM
 #define LI_FF_REMOTE_TEXT_CONTEXT     0x200 // Host can send InputPane/UIA text context updates
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
+#define LI_FF_CLIENT_RESOLUTION_CHANGE 0x400 // Host applies LiRequestResolutionChange() requests
 #define LI_FF_HOST_SESSION_STATE      0x800 // Host can report its session lock state
 uint32_t LiGetHostFeatureFlags(void);
 
@@ -1425,6 +1426,8 @@ int LiSendClientSdrWhiteNits(float nits);
 
 // Foundation Sunshine extension. Zero means sent, not applied; clients must
 // observe a frame at the requested dimensions and reconnect on timeout.
+// Hosts that advertise LI_FF_CLIENT_RESOLUTION_CHANGE in LiGetHostFeatureFlags()
+// apply requests; check it first to skip requests the host would ignore.
 // -1: invalid dimensions; -2: unsupported host; -3: disconnected; -4: send failed.
 int LiRequestResolutionChange(int width, int height);
 
