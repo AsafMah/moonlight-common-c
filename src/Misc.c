@@ -18,16 +18,26 @@ static int serviceEnetHostInternal(ENetHost* client, ENetEvent* event, enet_uint
         int selectedTimeout = timeoutMs < ENET_INTERNAL_TIMEOUT_MS ? timeoutMs : ENET_INTERNAL_TIMEOUT_MS;
 
         // We want to report an interrupt event if we are able to read data
-        if (!ignoreInterrupts && ConnectionInterrupted) {
+        int waitError = !ignoreInterrupts ? liGetConnectionAttemptWaitError() : 0;
+        if (waitError != 0) {
             Limelog("ENet wait interrupted\n");
-            SetLastSocketError(EINTR);
+            SetLastSocketError(waitError);
             ret = -1;
             break;
+        }
+
+        uint32_t remainingMs = liGetConnectionAttemptRemainingTimeMs();
+        if (!ignoreInterrupts && remainingMs != UINT32_MAX && remainingMs < (uint32_t)selectedTimeout) {
+            selectedTimeout = (int)remainingMs;
         }
 
         ret = enet_host_service(client, event, selectedTimeout);
         if (ret != 0 || timeoutMs == 0) {
             break;
+        }
+
+        if (!ignoreInterrupts && liGetConnectionAttemptWaitError() != 0) {
+            continue;
         }
 
         timeoutMs -= selectedTimeout;

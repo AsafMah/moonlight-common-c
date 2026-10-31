@@ -44,6 +44,7 @@ int LiFindExternalAddressIP4(const char* stunServer, unsigned short stunPort, un
     STUN_MESSAGE reqMsg;
     int i;
     int bytesRead;
+    int waitError;
     PSTUN_ATTRIBUTE_HEADER attribute;
     PSTUN_MAPPED_IPV4_ADDRESS_ATTRIBUTE ipv4Attrib;
     union {
@@ -52,6 +53,7 @@ int LiFindExternalAddressIP4(const char* stunServer, unsigned short stunPort, un
     } resp;
 
     sock = INVALID_SOCKET;
+    stunAddrs = NULL;
 
     err = initializePlatformSockets();
     if (err != 0) {
@@ -66,7 +68,7 @@ int LiFindExternalAddressIP4(const char* stunServer, unsigned short stunPort, un
     hints.ai_flags = AI_ADDRCONFIG;
 
     snprintf(stunPortStr, sizeof(stunPortStr), "%u", stunPort);
-    err = getaddrinfo(stunServer, stunPortStr, &hints, &stunAddrs);
+    err = liGetAddrInfo(stunServer, stunPortStr, &hints, &stunAddrs);
     if (err != 0 || stunAddrs == NULL) {
         Limelog("Failed to resolve STUN server: %d\n", err);
         stunAddrs = NULL;
@@ -87,6 +89,12 @@ int LiFindExternalAddressIP4(const char* stunServer, unsigned short stunPort, un
 
     bytesRead = SOCKET_ERROR;
     for (i = 0; i < STUN_RECV_TIMEOUT_SEC * 1000 / UDP_RECV_POLL_TIMEOUT_MS && bytesRead <= 0; i++) {
+        waitError = liGetConnectionAttemptWaitError();
+        if (waitError != 0) {
+            err = waitError;
+            goto Exit;
+        }
+
         // Retransmit the request every second until the timeout elapses or we get a response
         if (i % (1000 / UDP_RECV_POLL_TIMEOUT_MS) == 0) {
             struct addrinfo *current;
@@ -103,11 +111,21 @@ int LiFindExternalAddressIP4(const char* stunServer, unsigned short stunPort, un
                 // Wait UDP_RECV_POLL_TIMEOUT_MS before moving on to the next server to
                 // avoid having to spam the other STUN servers if we find a working one.
                 bytesRead = recvUdpSocket(sock, resp.buf, sizeof(resp.buf), true);
+                waitError = liGetConnectionAttemptWaitError();
+                if (waitError != 0) {
+                    err = waitError;
+                    goto Exit;
+                }
             }
         }
         else {
             // This waits in UDP_RECV_POLL_TIMEOUT_MS increments
             bytesRead = recvUdpSocket(sock, resp.buf, sizeof(resp.buf), true);
+            waitError = liGetConnectionAttemptWaitError();
+            if (waitError != 0) {
+                err = waitError;
+                goto Exit;
+            }
         }
     }
 

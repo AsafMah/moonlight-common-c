@@ -62,6 +62,11 @@ extern in_port_t n3ds_udp_port;
 #endif
 #define ECONNREFUSED WSAECONNREFUSED
 
+#ifdef ECONNRESET
+#undef ECONNRESET
+#endif
+#define ECONNRESET WSAECONNRESET
+
 #ifdef EMSGSIZE
 #undef EMSGSIZE
 #endif
@@ -143,11 +148,24 @@ void closeSocket(SOCKET s);
 bool isPrivateNetworkAddress(struct sockaddr_storage* address);
 bool isNat64SynthesizedAddress(struct sockaddr_storage* address);
 int pollSockets(struct pollfd* pollFds, int pollFdsCount, int timeoutMs);
+int pollSocketsInterruptibly(struct pollfd* pollFds, int pollFdsCount, int timeoutMs);
 bool isSocketReadable(SOCKET s);
+int liGetAddrInfo(const char* host, const char* service, const struct addrinfo* hints,
+                  struct addrinfo** result);
 
 #define TCP_PORT_MASK 0xFFFF
 #define TCP_PORT_FLAG_ALWAYS_TEST 0x10000
 int resolveHostName(const char* host, int family, int tcpTestPort, struct sockaddr_storage* addr, SOCKADDR_LEN* addrLen);
+
+#ifdef LC_TESTING
+typedef int (*LiTestConnectFunction)(SOCKET socket, const struct sockaddr* address, SOCKADDR_LEN addressLength);
+typedef int (*LiTestPollFunction)(struct pollfd* pollFds, int pollFdsCount, int timeoutMs);
+typedef int (*LiTestGetAddrInfoFunction)(const char* node, const char* service,
+                                         const struct addrinfo* hints, struct addrinfo** result);
+void liSetConnectionSocketFunctionsForTests(LiTestConnectFunction connectFunction,
+                                            LiTestPollFunction pollFunction);
+void liSetGetAddrInfoFunctionForTests(LiTestGetAddrInfoFunction resolverFunction);
+#endif
 
 void enterLowLatencyMode(void);
 void exitLowLatencyMode(void);

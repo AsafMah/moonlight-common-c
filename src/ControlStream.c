@@ -1512,6 +1512,47 @@ static void processRemoteTextContext(const uint8_t* payload, int payloadLength) 
     RemoteTextContextCallback(&context);
 }
 
+static int mapExtendedTerminationReason(uint32_t reason, int packetLength, uint32_t seenFrame) {
+    switch (reason) {
+    case 0x800e9403: // NVST_DISCONN_SERVER_VIDEO_ENCODER_CONVERT_INPUT_FRAME_FAILED
+        return ML_ERROR_FRAME_CONVERSION;
+    case 0x800e9302: // NVST_DISCONN_SERVER_VFP_PROTECTED_CONTENT
+        return ML_ERROR_PROTECTED_CONTENT;
+    case 0x80030023: // NVST_DISCONN_SERVER_TERMINATED_CLOSED
+        return seenFrame != 0 ? ML_ERROR_GRACEFUL_TERMINATION :
+                                ML_ERROR_UNEXPECTED_EARLY_TERMINATION;
+    case SS_TERMINATION_HOST_RESTART_V1:
+        if (packetLength != 6 || !HostRestartNegotiated || !encryptedControlStream ||
+                (EncryptionFeaturesEnabled & SS_ENC_CONTROL_V2) == 0) {
+            Limelog("Protocol error: rejecting malformed or unnegotiated host restart termination\n");
+            return ML_ERROR_GRACEFUL_TERMINATION;
+        }
+        return ML_ERROR_HOST_RESTART;
+    default:
+        if ((reason & UINT32_C(0xffffff00)) ==
+                (SS_TERMINATION_HOST_RESTART_V1 & UINT32_C(0xffffff00))) {
+            Limelog("Protocol error: rejecting unsupported host restart termination version\n");
+            return ML_ERROR_GRACEFUL_TERMINATION;
+        }
+        return (int)reason;
+    }
+}
+
+static int mapShortTerminationReason(uint16_t reason, uint32_t seenFrame) {
+    if (reason == (SS_TERMINATION_HOST_RESTART_V1 >> 16)) {
+        Limelog("Protocol error: rejecting truncated host restart termination\n");
+        return ML_ERROR_GRACEFUL_TERMINATION;
+    }
+
+    // SERVER_TERMINATED_INTENDED
+    if (reason == 0x0100) {
+        return seenFrame != 0 ? ML_ERROR_GRACEFUL_TERMINATION :
+                                ML_ERROR_UNEXPECTED_EARLY_TERMINATION;
+    }
+
+    return reason;
+}
+
 static void controlReceiveThreadFunc(void* context) {
     int err;
 
@@ -1788,39 +1829,23 @@ static void controlReceiveThreadFunc(void* context) {
             }
             else if (ctlHdr->type == packetTypes[IDX_TERMINATION]) {
                 BYTE_BUFFER bb;
-
-
-                uint32_t terminationErrorCode;
+                int terminationErrorCode;
 
                 if (packetLength >= 6) {
+                    uint32_t serverTerminationReason;
+
                     // This is the extended termination message which contains a full HRESULT
                     BbInitializeWrappedBuffer(&bb, (char*)ctlHdr, sizeof(*ctlHdr), packetLength - sizeof(*ctlHdr), BYTE_ORDER_BIG);
-                    BbGet32(&bb, &terminationErrorCode);
+                    BbGet32(&bb, &serverTerminationReason);
 
-                    Limelog("Server notified termination reason: 0x%08x\n", terminationErrorCode);
+                    Limelog("Server notified termination reason: 0x%08x\n", serverTerminationReason);
 
-                    // Normalize the termination error codes for specific values we recognize
-                    switch (terminationErrorCode) {
-                    case 0x800e9403: // NVST_DISCONN_SERVER_VIDEO_ENCODER_CONVERT_INPUT_FRAME_FAILED
-                        terminationErrorCode = ML_ERROR_FRAME_CONVERSION;
-                        break;
-                    case 0x800e9302: // NVST_DISCONN_SERVER_VFP_PROTECTED_CONTENT
-                        terminationErrorCode = ML_ERROR_PROTECTED_CONTENT;
-                        break;
-                    case 0x80030023: // NVST_DISCONN_SERVER_TERMINATED_CLOSED
-                        if (lastSeenFrame != 0) {
-                            // Pass error code 0 to notify the client that this was not an error
-                            terminationErrorCode = ML_ERROR_GRACEFUL_TERMINATION;
-                        }
-                        else {
-                            // We never saw a frame, so this is probably an error that caused
-                            // NvStreamer to terminate prior to sending any frames.
-                            terminationErrorCode = ML_ERROR_UNEXPECTED_EARLY_TERMINATION;
-                        }
-                        break;
-                    default:
-                        break;
-                    }
+                    terminationErrorCode =
+                        mapExtendedTerminationReason(serverTerminationReason, packetLength, lastSeenFrame);
+                }
+                else if (packetLength < 4) {
+                    Limelog("Protocol error: rejecting truncated termination packet\n");
+                    terminationErrorCode = ML_ERROR_GRACEFUL_TERMINATION;
                 }
                 else {
                     uint16_t terminationReason;
@@ -1831,22 +1856,7 @@ static void controlReceiveThreadFunc(void* context) {
 
                     Limelog("Server notified termination reason: 0x%04x\n", terminationReason);
 
-                    // SERVER_TERMINATED_INTENDED
-                    if (terminationReason == 0x0100) {
-                        if (lastSeenFrame != 0) {
-                            // Pass error code 0 to notify the client that this was not an error
-                            terminationErrorCode = ML_ERROR_GRACEFUL_TERMINATION;
-                        }
-                        else {
-                            // We never saw a frame, so this is probably an error that caused
-                            // NvStreamer to terminate prior to sending any frames.
-                            terminationErrorCode = ML_ERROR_UNEXPECTED_EARLY_TERMINATION;
-                        }
-                    }
-                    else {
-                        // Otherwise pass the reason unmodified
-                        terminationErrorCode = terminationReason;
-                    }
+                    terminationErrorCode = mapShortTerminationReason(terminationReason, lastSeenFrame);
                 }
 
                 // We used to wait for a ENET_EVENT_TYPE_DISCONNECT event, but since

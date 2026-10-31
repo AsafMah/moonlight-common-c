@@ -5,6 +5,7 @@ static ConnListenerConnectionTerminated originalTerminationCallback;
 static bool alreadyTerminated;
 static PLT_THREAD terminationCallbackThread;
 static int terminationCallbackErrorCode;
+static bool hostRestartRecoveryEnabledForNextConnection;
 
 // Common globals
 char* RemoteAddrString;
@@ -20,7 +21,7 @@ AUDIO_RENDERER_CALLBACKS AudioCallbacks;
 int NegotiatedVideoFormat;
 bool HostPyrowaveOffered;
 LI_PYROWAVE_CAPABILITIES HostPyrowaveCapabilities;
-volatile bool ConnectionInterrupted;
+atomic_bool ConnectionInterrupted;
 bool HighQualitySurroundSupported;
 bool HighQualitySurroundEnabled;
 OPUS_MULTISTREAM_CONFIGURATION NormalQualityOpusConfig;
@@ -33,6 +34,14 @@ LI_MAT_LIVE_PROFILE MatLiveProfile;
 int NegotiatedAudioBitrate;
 int NegotiatedDynamicHdrFormat;
 int NegotiatedDynamicHdrFallback;
+static atomic_bool connectionAttemptPrepared;
+static atomic_bool connectionAttemptActive;
+static atomic_bool preparedConnectionHasDeadline;
+static atomic_bool activeConnectionHasDeadline;
+static atomic_uint_fast64_t preparedConnectionDeadlineMs;
+static atomic_uint_fast64_t activeConnectionDeadlineMs;
+
+#define CONNECTION_WAIT_SLICE_MS 50
 uint16_t RtspPortNumber;
 uint16_t ControlPortNumber;
 uint16_t AudioPortNumber;
@@ -43,6 +52,9 @@ SS_PING VideoPingPayload;
 SS_PING MicPingPayload;
 uint32_t ControlConnectData;
 uint32_t SunshineFeatureFlags;
+bool HostRestartRecoveryEnabled;
+bool HostRestartHostSupported;
+bool HostRestartNegotiated;
 uint32_t EncryptionFeaturesSupported;
 uint32_t EncryptionFeaturesRequested;
 uint32_t EncryptionFeaturesEnabled;
@@ -69,11 +81,144 @@ const char* LiGetStageName(int stage) {
     return stageNames[stage];
 }
 
+static void beginConnectionAttempt(void) {
+    bool prepared = atomic_exchange_explicit(&connectionAttemptPrepared, false, memory_order_acq_rel);
+
+    if (prepared) {
+        bool hasDeadline = atomic_load_explicit(&preparedConnectionHasDeadline, memory_order_acquire);
+        uint64_t deadlineMs = atomic_load_explicit(&preparedConnectionDeadlineMs, memory_order_acquire);
+
+        atomic_store_explicit(&activeConnectionDeadlineMs, deadlineMs, memory_order_relaxed);
+        atomic_store_explicit(&activeConnectionHasDeadline, hasDeadline, memory_order_release);
+    }
+    else {
+        // Preserve the historical behavior for callers that don't opt into
+        // explicit per-attempt cancellation and deadline preparation.
+        atomic_store_explicit(&ConnectionInterrupted, false, memory_order_release);
+        atomic_store_explicit(&activeConnectionHasDeadline, false, memory_order_release);
+    }
+
+    atomic_store_explicit(&connectionAttemptActive, true, memory_order_release);
+}
+
+static void endConnectionAttempt(void) {
+    atomic_store_explicit(&connectionAttemptActive, false, memory_order_release);
+    atomic_store_explicit(&activeConnectionHasDeadline, false, memory_order_release);
+}
+
+uint32_t liGetConnectionAttemptRemainingTimeMs(void) {
+    bool hasDeadline;
+    uint64_t deadlineMs;
+    uint64_t nowMs;
+    uint64_t remainingMs;
+
+    if (atomic_load_explicit(&connectionAttemptActive, memory_order_acquire)) {
+        hasDeadline = atomic_load_explicit(&activeConnectionHasDeadline, memory_order_acquire);
+        deadlineMs = atomic_load_explicit(&activeConnectionDeadlineMs, memory_order_relaxed);
+    }
+    else if (atomic_load_explicit(&connectionAttemptPrepared, memory_order_acquire)) {
+        hasDeadline = atomic_load_explicit(&preparedConnectionHasDeadline, memory_order_acquire);
+        deadlineMs = atomic_load_explicit(&preparedConnectionDeadlineMs, memory_order_relaxed);
+    }
+    else {
+        return UINT32_MAX;
+    }
+
+    if (!hasDeadline) {
+        return UINT32_MAX;
+    }
+
+    nowMs = PltGetMillis();
+    if (deadlineMs <= nowMs) {
+        return 0;
+    }
+
+    remainingMs = deadlineMs - nowMs;
+    return remainingMs >= UINT32_MAX ? UINT32_MAX - 1 : (uint32_t)remainingMs;
+}
+
+int liGetConnectionAttemptWaitError(void) {
+    if (!atomic_load_explicit(&connectionAttemptActive, memory_order_acquire) &&
+            !atomic_load_explicit(&connectionAttemptPrepared, memory_order_acquire)) {
+        return 0;
+    }
+
+    if (atomic_load_explicit(&ConnectionInterrupted, memory_order_acquire)) {
+        return EINTR;
+    }
+
+    if (liGetConnectionAttemptRemainingTimeMs() == 0) {
+        return ETIMEDOUT;
+    }
+
+    return 0;
+}
+
+bool liWaitForConnectionDelayMs(uint32_t delayMs) {
+    uint64_t operationDeadlineMs = PltGetMillis() + delayMs;
+
+    for (;;) {
+        uint64_t nowMs = PltGetMillis();
+        int waitError = liGetConnectionAttemptWaitError();
+
+        if (waitError != 0) {
+            SetLastSocketError(waitError);
+            return false;
+        }
+
+        if (nowMs >= operationDeadlineMs) {
+            return true;
+        }
+
+        uint64_t waitMs = operationDeadlineMs - nowMs;
+        uint32_t attemptRemainingMs = liGetConnectionAttemptRemainingTimeMs();
+        if (attemptRemainingMs != UINT32_MAX && waitMs > attemptRemainingMs) {
+            waitMs = attemptRemainingMs;
+        }
+        if (waitMs > CONNECTION_WAIT_SLICE_MS) {
+            waitMs = CONNECTION_WAIT_SLICE_MS;
+        }
+
+        PltSleepMs((int)waitMs);
+    }
+}
+
+bool liConnectionAttemptHasControl(void) {
+    return atomic_load_explicit(&connectionAttemptActive, memory_order_acquire) ||
+           atomic_load_explicit(&connectionAttemptPrepared, memory_order_acquire);
+}
+
 // Interrupt a pending connection attempt. This interruption happens asynchronously
 // so it is not safe to start another connection before LiStartConnection() returns.
 void LiInterruptConnection(void) {
     // Signal anyone waiting on the global interrupted flag
-    ConnectionInterrupted = true;
+    atomic_store_explicit(&ConnectionInterrupted, true, memory_order_release);
+}
+
+void LiPrepareConnectionAttempt(uint32_t remainingTimeoutMs) {
+    if (stage != STAGE_NONE ||
+            atomic_load_explicit(&connectionAttemptActive, memory_order_acquire)) {
+        Limelog("Connection attempt preparation must happen before LiStartConnection()\n");
+        return;
+    }
+
+    atomic_store_explicit(&ConnectionInterrupted, false, memory_order_release);
+    atomic_store_explicit(&preparedConnectionHasDeadline, remainingTimeoutMs != UINT32_MAX, memory_order_relaxed);
+    if (remainingTimeoutMs != UINT32_MAX) {
+        atomic_store_explicit(&preparedConnectionDeadlineMs,
+                              PltGetMillis() + remainingTimeoutMs,
+                              memory_order_relaxed);
+    }
+    atomic_store_explicit(&connectionAttemptPrepared, true, memory_order_release);
+}
+
+void LiSetHostRestartRecoveryEnabled(bool enabled) {
+    if (stage != STAGE_NONE) {
+        Limelog("Host restart recovery opt-in must be set before LiStartConnection()\n");
+        return;
+    }
+
+    hostRestartRecoveryEnabledForNextConnection = enabled;
 }
 
 // Stop the connection by undoing the step at the current stage and those before it
@@ -232,9 +377,21 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     void* audioContext, int arFlags) {
     int err;
 
+    HostRestartRecoveryEnabled = hostRestartRecoveryEnabledForNextConnection;
+    hostRestartRecoveryEnabledForNextConnection = false;
+    HostRestartHostSupported = false;
+    HostRestartNegotiated = false;
+
     // Start from a clean stream socket registry in case a prior session
     // didn't go through LiStopConnection()
     LiClearStreamSockets();
+
+    beginConnectionAttempt();
+    err = liGetConnectionAttemptWaitError();
+    if (err != 0) {
+        SetLastSocketError(err);
+        goto Cleanup;
+    }
 
     if (drCallbacks != NULL && (drCallbacks->capabilities & CAPABILITY_PULL_RENDERER) && drCallbacks->submitDecodeUnit) {
         Limelog("CAPABILITY_PULL_RENDERER cannot be set with a submitDecodeUnit callback\n");
@@ -319,7 +476,6 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     }
 
     alreadyTerminated = false;
-    ConnectionInterrupted = false;
     
     // Validate the audio configuration
     if (MAGIC_BYTE_FROM_AUDIO_CONFIG(StreamConfig.audioConfiguration) != 0xCA ||
@@ -463,12 +619,16 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
         // If we have an alternate RTSP port, use that as our test port. The host probably
         // isn't listening on 47989 or 47984 anyway, since they're using alternate ports.
         err = resolveHostName(serverInfo->address, AF_UNSPEC, RtspPortNumber, &RemoteAddr, &AddrLen);
-        if (err != 0) {
+        if (err != 0 && liGetConnectionAttemptWaitError() == 0) {
             // Sleep for a second and try again. It's possible that we've attempt to connect
             // before the host has gotten around to listening on the RTSP port. Give it some
             // time before retrying.
-            PltSleepMs(1000);
-            err = resolveHostName(serverInfo->address, AF_UNSPEC, RtspPortNumber, &RemoteAddr, &AddrLen);
+            if (liWaitForConnectionDelayMs(1000)) {
+                err = resolveHostName(serverInfo->address, AF_UNSPEC, RtspPortNumber, &RemoteAddr, &AddrLen);
+            }
+            else {
+                err = LastSocketError();
+            }
         }
     }
     else {
@@ -479,15 +639,22 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
         // a) it's not always listening and there's a race between listen() on the host and our connect()
         // b) it's not used at all by certain host versions which perform RTSP over ENet
         err = resolveHostName(serverInfo->address, AF_UNSPEC, 47984, &RemoteAddr, &AddrLen);
-        if (err != 0) {
+        if (err != 0 && liGetConnectionAttemptWaitError() == 0) {
             err = resolveHostName(serverInfo->address, AF_UNSPEC, 47989, &RemoteAddr, &AddrLen);
         }
-        if (err != 0) {
+        if (err != 0 && liGetConnectionAttemptWaitError() == 0) {
             err = resolveHostName(serverInfo->address, AF_UNSPEC, 48010, &RemoteAddr, &AddrLen);
         }
     }
     if (err != 0) {
         Limelog("failed: %d\n", err);
+        ListenerCallbacks.stageFailed(STAGE_NAME_RESOLUTION, err);
+        goto Cleanup;
+    }
+
+    err = liGetConnectionAttemptWaitError();
+    if (err != 0) {
+        SetLastSocketError(err);
         ListenerCallbacks.stageFailed(STAGE_NAME_RESOLUTION, err);
         goto Cleanup;
     }
@@ -504,6 +671,24 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
         LC_ASSERT(localAddrLen == AddrLen);
     }
 
+    err = liGetConnectionAttemptWaitError();
+    if (err != 0) {
+        SetLastSocketError(err);
+        ListenerCallbacks.stageFailed(STAGE_NAME_RESOLUTION, err);
+        goto Cleanup;
+    }
+
+    bool isNat64 = false;
+    if (StreamConfig.streamingRemotely == STREAM_CFG_AUTO) {
+        isNat64 = isNat64SynthesizedAddress(&RemoteAddr);
+        err = liGetConnectionAttemptWaitError();
+        if (err != 0) {
+            SetLastSocketError(err);
+            ListenerCallbacks.stageFailed(STAGE_NAME_RESOLUTION, err);
+            goto Cleanup;
+        }
+    }
+
     stage++;
     LC_ASSERT(stage == STAGE_NAME_RESOLUTION);
     ListenerCallbacks.stageComplete(STAGE_NAME_RESOLUTION);
@@ -513,8 +698,6 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     // now that we have resolved the target address and impose the video packet
     // size cap if required.
     if (StreamConfig.streamingRemotely == STREAM_CFG_AUTO) {
-        bool isNat64 = isNat64SynthesizedAddress(&RemoteAddr);
-
         // It's possible to have a NAT64 prefix on a ULA or other private range,
         // so we must exclude NAT64 addresses from our local address checks.
         if (!isNat64 && isPrivateNetworkAddress(&RemoteAddr)) {
@@ -711,6 +894,7 @@ Cleanup:
         // Undo any work we've done here before failing
         LiStopConnection();
     }
+    endConnectionAttempt();
     return err;
 }
 

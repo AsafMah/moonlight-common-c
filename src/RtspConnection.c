@@ -405,6 +405,67 @@ Exit:
 }
 
 // Send RTSP message and get response over TCP
+static int sendRtspMessageInterruptibly(SOCKET socket, const char* data, int length) {
+    uint64_t operationDeadlineMs = PltGetMillis() + RTSP_CONNECT_TIMEOUT_SEC * 1000;
+    int bytesSent = 0;
+
+    while (bytesSent < length) {
+        struct pollfd pfd;
+        uint64_t nowMs = PltGetMillis();
+        uint64_t remainingMs;
+        int waitError;
+        int ready;
+        int sent;
+
+        if (nowMs >= operationDeadlineMs) {
+            SetLastSocketError(ETIMEDOUT);
+            return -1;
+        }
+
+        pfd.fd = socket;
+        pfd.events = POLLOUT;
+        remainingMs = operationDeadlineMs - nowMs;
+        ready = pollSocketsInterruptibly(&pfd, 1, (int)remainingMs);
+        if (ready <= 0) {
+            if (ready == 0) {
+                SetLastSocketError(ETIMEDOUT);
+            }
+            return -1;
+        }
+
+        waitError = liGetConnectionAttemptWaitError();
+        if (waitError != 0) {
+            SetLastSocketError(waitError);
+            return -1;
+        }
+        if (PltGetMillis() >= operationDeadlineMs) {
+            SetLastSocketError(ETIMEDOUT);
+            return -1;
+        }
+
+        sent = (int)send(socket, &data[bytesSent], length - bytesSent, 0);
+        if (sent < 0) {
+            int sendError = LastSocketError();
+            if (sendError == EWOULDBLOCK || sendError == EAGAIN || sendError == EINTR) {
+                int waitError = liGetConnectionAttemptWaitError();
+                if (waitError == 0) {
+                    continue;
+                }
+                SetLastSocketError(waitError);
+            }
+            return -1;
+        }
+        else if (sent == 0) {
+            SetLastSocketError(ECONNRESET);
+            return -1;
+        }
+
+        bytesSent += sent;
+    }
+
+    return bytesSent;
+}
+
 static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response, int* error) {
     SOCK_RET err;
     bool ret;
@@ -413,24 +474,43 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
     int messageLen;
     char* responseBuffer;
     int responseBufferSize;
-    int connectRetries;
 
     *error = -1;
     ret = false;
     responseBuffer = NULL;
-    connectRetries = 0;
+    uint64_t connectRetryDeadlineMs = PltGetMillis() + RTSP_CONNECT_TIMEOUT_SEC * 1000;
 
     // Retry up to 10 seconds if we receive ECONNREFUSED errors from the host PC.
     // This can happen with GFE 3.22 when initially launching a session because it
     // returns HTTP 200 OK for the /launch request before the RTSP handshake port
     // is listening.
-    do {
+    for (;;) {
+        int waitError = liGetConnectionAttemptWaitError();
+        if (waitError != 0) {
+            *error = waitError;
+            SetLastSocketError(waitError);
+            return ret;
+        }
+
         sock = connectTcpSocket(&RemoteAddr, AddrLen, RtspPortNumber, RTSP_CONNECT_TIMEOUT_SEC);
         if (sock == INVALID_SOCKET) {
             *error = LastSocketError();
             if (*error == ECONNREFUSED) {
                 // Try again after 500 ms on ECONNREFUSED
-                PltSleepMs(RTSP_RETRY_DELAY_MS);
+                uint64_t nowMs = PltGetMillis();
+                if (nowMs >= connectRetryDeadlineMs) {
+                    *error = ETIMEDOUT;
+                    break;
+                }
+
+                uint32_t delayMs = RTSP_RETRY_DELAY_MS;
+                if (connectRetryDeadlineMs - nowMs < delayMs) {
+                    delayMs = (uint32_t)(connectRetryDeadlineMs - nowMs);
+                }
+                if (!liWaitForConnectionDelayMs(delayMs)) {
+                    *error = LastSocketError();
+                    break;
+                }
             }
             else {
                 // Fail if we get some other error
@@ -441,7 +521,7 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
             // We successfully connected
             break;
         }
-    } while (connectRetries++ < (RTSP_CONNECT_TIMEOUT_SEC * 1000) / RTSP_RETRY_DELAY_MS && !ConnectionInterrupted);
+    }
     if (sock == INVALID_SOCKET) {
         return ret;
     }
@@ -454,9 +534,13 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
     }
 
     // Send our message split into smaller chunks to avoid MTU issues.
-    // enableNoDelay() must have been called for sendMtuSafe() to work.
     enableNoDelay(sock);
-    err = sendMtuSafe(sock, serializedMessage, messageLen);
+    if (setSocketNonBlocking(sock, true) != 0) {
+        *error = LastSocketError();
+        Limelog("Failed to make RTSP socket non-blocking: %d\n", *error);
+        goto Exit;
+    }
+    err = sendRtspMessageInterruptibly(sock, serializedMessage, messageLen);
     if (err == SOCKET_ERROR) {
         *error = LastSocketError();
         Limelog("Failed to send RTSP message: %d\n", *error);
@@ -468,6 +552,13 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
     responseBufferSize = 0;
     for (;;) {
         struct pollfd pfd;
+        int waitError = liGetConnectionAttemptWaitError();
+
+        if (waitError != 0) {
+            *error = waitError;
+            SetLastSocketError(waitError);
+            goto Exit;
+        }
 
         if (offset >= responseBufferSize) {
             if ((size_t)offset >= MAX_RTSP_RESPONSE_SIZE) {
@@ -487,7 +578,7 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
 
         pfd.fd = sock;
         pfd.events = POLLIN;
-        err = pollSockets(&pfd, 1, RTSP_RECEIVE_TIMEOUT_SEC * 1000);
+        err = pollSocketsInterruptibly(&pfd, 1, RTSP_RECEIVE_TIMEOUT_SEC * 1000);
         if (err == 0) {
             *error = ETIMEDOUT;
             Limelog("RTSP request timed out\n");
@@ -499,10 +590,20 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
             goto Exit;
         }
 
+        waitError = liGetConnectionAttemptWaitError();
+        if (waitError != 0) {
+            *error = waitError;
+            SetLastSocketError(waitError);
+            goto Exit;
+        }
+
         err = recv(sock, &responseBuffer[offset], responseBufferSize - offset, 0);
         if (err < 0) {
             // Error reading
             *error = LastSocketError();
+            if (*error == EWOULDBLOCK || *error == EAGAIN) {
+                continue;
+            }
             Limelog("Failed to read RTSP response: %d\n", *error);
             goto Exit;
         }
@@ -539,8 +640,10 @@ Exit:
 }
 
 static bool transactRtspMessage(PRTSP_MESSAGE request, PRTSP_MESSAGE response, bool expectingPayload, int* error) {
-    if (ConnectionInterrupted) {
-        *error = -1;
+    int waitError = liGetConnectionAttemptWaitError();
+    if (waitError != 0) {
+        *error = waitError;
+        SetLastSocketError(waitError);
         return false;
     }
 
@@ -1125,6 +1228,90 @@ bool parseSdpAttributeToInt(const char* payload, const char* name, int* val) {
     return true;
 }
 
+static bool parseSingleSdpDecimalUInt(const char* payload, const char* name, uint32_t* value) {
+    const char* line;
+    const size_t nameLength = strlen(name);
+    uint32_t parsedValue = 0;
+    bool found = false;
+
+    if (payload == NULL) {
+        return false;
+    }
+
+    line = payload;
+    while (*line != '\0') {
+        const char* lineEnd = strchr(line, '\n');
+        size_t lineLength = lineEnd != NULL ? (size_t)(lineEnd - line) : strlen(line);
+        const char* attribute = line;
+        const char* colon;
+
+        if (lineLength > 0 && line[lineLength - 1] == '\r') {
+            lineLength--;
+        }
+        if (lineLength >= 2 && attribute[0] == 'a' && attribute[1] == '=') {
+            attribute += 2;
+            lineLength -= 2;
+        }
+
+        colon = (const char*)memchr(attribute, ':', lineLength);
+        if (colon != NULL && (size_t)(colon - attribute) == nameLength &&
+                memcmp(attribute, name, nameLength) == 0) {
+            const char* cursor = colon + 1;
+            const char* end = attribute + lineLength;
+            uint32_t currentValue = 0;
+            bool hasDigit = false;
+
+            if (found) {
+                return false;
+            }
+            found = true;
+
+            while (cursor < end && (*cursor == ' ' || *cursor == '\t')) {
+                cursor++;
+            }
+            while (cursor < end && *cursor >= '0' && *cursor <= '9') {
+                uint32_t digit = (uint32_t)(*cursor - '0');
+                if (currentValue > (UINT32_MAX - digit) / 10) {
+                    return false;
+                }
+                currentValue = currentValue * 10 + digit;
+                hasDigit = true;
+                cursor++;
+            }
+            while (cursor < end && (*cursor == ' ' || *cursor == '\t')) {
+                cursor++;
+            }
+            if (!hasDigit || cursor != end) {
+                return false;
+            }
+            parsedValue = currentValue;
+        }
+
+        if (lineEnd == NULL) {
+            break;
+        }
+        line = lineEnd + 1;
+    }
+
+    if (!found) {
+        return false;
+    }
+
+    *value = parsedValue;
+    return true;
+}
+
+bool liIsHostRestartProtocolSupported(const char* sdp, bool isSunshine) {
+    uint32_t hostFeatureFlags;
+    uint32_t protocolVersion;
+
+    return isSunshine &&
+           parseSingleSdpDecimalUInt(sdp, "x-ss-general.featureFlags", &hostFeatureFlags) &&
+           (hostFeatureFlags & LI_FF_HOST_RESTART) != 0 &&
+           parseSingleSdpDecimalUInt(sdp, "x-ss-restart.protocolVersion", &protocolVersion) &&
+           protocolVersion == LI_HOST_RESTART_PROTOCOL_VERSION;
+}
+
 // Perform RTSP Handshake with the streaming server machine as part of the connection process
 int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
     int ret;
@@ -1412,6 +1599,12 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         // Look for the Sunshine feature flags in the SDP attributes
         if (!parseSdpAttributeToUInt(response.payload, "x-ss-general.featureFlags", &SunshineFeatureFlags)) {
             SunshineFeatureFlags = 0;
+        }
+        HostRestartHostSupported =
+            liIsHostRestartProtocolSupported(response.payload, IS_SUNSHINE());
+        if (IS_SUNSHINE() && (SunshineFeatureFlags & LI_FF_HOST_RESTART) != 0 &&
+                !HostRestartHostSupported) {
+            Limelog("Ignoring host restart capability with a missing, duplicate, malformed, or incompatible protocol version\n");
         }
 
         // Look for the Sunshine encryption flags in the SDP attributes

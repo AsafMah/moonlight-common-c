@@ -555,6 +555,10 @@ typedef void(*ConnListenerConnectionTerminated)(int errorCode);
 // supported on GFE 3.22+.
 #define ML_ERROR_FRAME_CONVERSION -104
 
+// Explicitly negotiated Core restart intent; common-c does not reconnect.
+#define SS_TERMINATION_HOST_RESTART_V1 0x53535201
+#define ML_ERROR_HOST_RESTART -5502
+
 // This callback is invoked to log debug message
 typedef void(*ConnListenerLogMessage)(const char* format, ...);
 
@@ -753,6 +757,11 @@ typedef void(*ConnListenerDs5HapticsState)(uint16_t controllerNumber, const uint
 // function is not thread-safe. Pass NULL to unregister before the next connection.
 void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback);
 
+// Enable explicit host-restart termination handling for the next connection.
+// Call before LiStartConnection(); the option defaults to false and is consumed
+// by one connection attempt. This function is not thread-safe.
+void LiSetHostRestartRecoveryEnabled(bool enabled);
+
 // ServerCodecModeSupport values
 #define SCM_H264            0x00000001
 #define SCM_HEVC            0x00000100
@@ -809,6 +818,15 @@ void LiStopConnection(void);
 // This function interrupts a pending LiStartConnection() call. This interruption happens asynchronously
 // so it is not safe to start another connection before the first LiStartConnection() call returns.
 void LiInterruptConnection(void);
+
+// Prepare cancellation and a remaining-time budget for the next LiStartConnection().
+// Call once before checking application cancellation and before LiStartConnection().
+// UINT32_MAX disables the additional deadline; 0 means the budget is already expired.
+// The budget starts immediately and is not renewed by LiStartConnection().
+// LiStartConnection consumes this preparation even if validation fails. An interrupt
+// after this call is preserved through LiStartConnection entry. Callers that do not
+// use this API retain the legacy implicit interrupt reset behavior.
+void LiPrepareConnectionAttempt(uint32_t remainingTimeoutMs);
 
 // Use to get a user-visible string to display initialization progress
 // from the integer passed to the ConnListenerStageXXX callbacks
@@ -1377,6 +1395,10 @@ void LiRequestIdrFrame(void);
 #define LI_FF_REMOTE_TEXT_CONTEXT     0x200 // Host can send InputPane/UIA text context updates
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
 #define LI_FF_CLIENT_RESOLUTION_CHANGE 0x400 // LiSendResolutionChangeRequest() supported
+#define LI_FF_HOST_RESTART            0x800 // Host can signal an opted-in Core restart
+#define LI_HOST_RESTART_PROTOCOL_VERSION 1
+// Client ANNOUNCE feature bit; this is a separate namespace from LI_FF_*.
+#define ML_FF_HOST_RESTART            0x100
 uint32_t LiGetHostFeatureFlags(void);
 
 // Returns true if the host offered PyroWave in its RTSP DESCRIBE response for

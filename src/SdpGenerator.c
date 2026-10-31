@@ -270,6 +270,7 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
 
     optionHead = NULL;
     err = 0;
+    HostRestartNegotiated = false;
 
     if (IS_SUNSHINE()) {
         // Send client feature flags to Sunshine hosts
@@ -285,6 +286,19 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         }
         if (RemoteTextContextCallback != NULL) {
             moonlightFeatureFlags |= ML_FF_REMOTE_TEXT_CONTEXT;
+        }
+        if (HostRestartRecoveryEnabled && HostRestartHostSupported &&
+                (EncryptionFeaturesSupported & SS_ENC_CONTROL_V2) != 0) {
+            int restartVersionAttributeError;
+
+            snprintf(payloadStr, sizeof(payloadStr), "%u", LI_HOST_RESTART_PROTOCOL_VERSION);
+            restartVersionAttributeError =
+                addAttributeString(&optionHead, "x-ml-restart.protocolVersion", payloadStr);
+            err |= restartVersionAttributeError;
+            if (restartVersionAttributeError == 0) {
+                moonlightFeatureFlags |= ML_FF_HOST_RESTART;
+                HostRestartNegotiated = true;
+            }
         }
         if ((StreamConfig.supportedVideoFormats & VIDEO_FORMAT_PYROWAVE) != 0 &&
                 (VideoCallbacks.capabilities & CAPABILITY_PYROWAVE) != 0) {

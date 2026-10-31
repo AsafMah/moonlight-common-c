@@ -15,6 +15,7 @@ extern LI_MAT_LIVE_PROFILE MatLiveProfile;
 #include "PyrowaveReassembly.h"
 
 #include <enet/enet.h>
+#include <stdatomic.h>
 
 // Common globals
 extern char* RemoteAddrString;
@@ -31,7 +32,11 @@ extern int NegotiatedVideoFormat;
 // PyroWave offer parsed from the host's RTSP DESCRIBE, whichever codec is negotiated.
 extern bool HostPyrowaveOffered;
 extern LI_PYROWAVE_CAPABILITIES HostPyrowaveCapabilities;
-extern volatile bool ConnectionInterrupted;
+extern atomic_bool ConnectionInterrupted;
+uint32_t liGetConnectionAttemptRemainingTimeMs(void);
+int liGetConnectionAttemptWaitError(void);
+bool liWaitForConnectionDelayMs(uint32_t delayMs);
+bool liConnectionAttemptHasControl(void);
 extern bool HighQualitySurroundSupported;
 extern bool HighQualitySurroundEnabled;
 extern OPUS_MULTISTREAM_CONFIGURATION NormalQualityOpusConfig;
@@ -116,6 +121,10 @@ extern uint32_t EncryptionFeaturesEnabled;
 #define ML_FF_PYROWAVE 0x20 // Client accepts the experimental PyroWave video contract
 #define ML_FF_DS5_HAPTICS_STATE 0x40 // Client accepts absolute DS5 actuator controls (0x550D)
 extern ConnListenerDs5HapticsState Ds5HapticsStateCallback;
+extern bool HostRestartRecoveryEnabled;
+extern bool HostRestartHostSupported;
+extern bool HostRestartNegotiated;
+bool liIsHostRestartProtocolSupported(const char* sdp, bool isSunshine);
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 

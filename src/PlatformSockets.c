@@ -1,6 +1,7 @@
 #include "Limelight-internal.h"
 
 #define TEST_PORT_TIMEOUT_SEC 3
+#define CONNECTION_WAIT_SLICE_MS 50
 
 #define RCV_BUFFER_SIZE_MIN  32767
 #define RCV_BUFFER_SIZE_STEP 16384
@@ -11,6 +12,22 @@
 #define TCPv4_MSS 536
 #endif
 #define TCPv6_MSS 1220
+
+#ifdef LC_TESTING
+static LiTestConnectFunction testConnectFunction;
+static LiTestPollFunction testPollFunction;
+static LiTestGetAddrInfoFunction testGetAddrInfoFunction;
+
+void liSetConnectionSocketFunctionsForTests(LiTestConnectFunction connectFunction,
+                                            LiTestPollFunction pollFunction) {
+    testConnectFunction = connectFunction;
+    testPollFunction = pollFunction;
+}
+
+void liSetGetAddrInfoFunctionForTests(LiTestGetAddrInfoFunction resolverFunction) {
+    testGetAddrInfoFunction = resolverFunction;
+}
+#endif
 
 #if defined(LC_WINDOWS) && !defined(NXDK)
 
@@ -165,6 +182,76 @@ int pollSockets(struct pollfd* pollFds, int pollFdsCount, int timeoutMs) {
 #endif
 }
 
+static int pollConnectionWaitSockets(struct pollfd* pollFds, int pollFdsCount, int timeoutMs) {
+#ifdef LC_TESTING
+    if (testPollFunction != NULL) {
+        return testPollFunction(pollFds, pollFdsCount, timeoutMs);
+    }
+#endif
+    return pollSockets(pollFds, pollFdsCount, timeoutMs);
+}
+
+int pollSocketsInterruptibly(struct pollfd* pollFds, int pollFdsCount, int timeoutMs) {
+    bool hasOperationDeadline = timeoutMs >= 0;
+    uint64_t operationDeadlineMs = hasOperationDeadline ? PltGetMillis() + (uint32_t)timeoutMs : 0;
+
+    for (;;) {
+        uint64_t nowMs;
+        uint64_t waitMs = CONNECTION_WAIT_SLICE_MS;
+        uint32_t attemptRemainingMs;
+        int waitError = liGetConnectionAttemptWaitError();
+        int pollResult;
+
+        if (waitError != 0) {
+            SetLastSocketError(waitError);
+            return waitError == ETIMEDOUT ? 0 : SOCKET_ERROR;
+        }
+
+        nowMs = PltGetMillis();
+        if (hasOperationDeadline) {
+            if (nowMs >= operationDeadlineMs) {
+                SetLastSocketError(ETIMEDOUT);
+                return 0;
+            }
+            if (operationDeadlineMs - nowMs < waitMs) {
+                waitMs = operationDeadlineMs - nowMs;
+            }
+        }
+
+        attemptRemainingMs = liGetConnectionAttemptRemainingTimeMs();
+        if (attemptRemainingMs != UINT32_MAX) {
+            if (attemptRemainingMs == 0) {
+                SetLastSocketError(ETIMEDOUT);
+                return 0;
+            }
+            if (attemptRemainingMs < waitMs) {
+                waitMs = attemptRemainingMs;
+            }
+        }
+
+        pollResult = pollConnectionWaitSockets(pollFds, pollFdsCount, (int)waitMs);
+        if (pollResult < 0) {
+            return pollResult;
+        }
+
+        waitError = liGetConnectionAttemptWaitError();
+        if (waitError != 0) {
+            SetLastSocketError(waitError);
+            return waitError == ETIMEDOUT ? 0 : SOCKET_ERROR;
+        }
+        if (pollResult > 0) {
+            return pollResult;
+        }
+
+        nowMs = PltGetMillis();
+        if ((hasOperationDeadline && nowMs >= operationDeadlineMs) ||
+                liGetConnectionAttemptRemainingTimeMs() == 0) {
+            SetLastSocketError(ETIMEDOUT);
+            return 0;
+        }
+    }
+}
+
 bool isSocketReadable(SOCKET s) {
     struct pollfd pfd;
     int err;
@@ -186,10 +273,16 @@ int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect) {
         if (useSelect) {
             struct pollfd pfd;
 
-            // Wait up to 100 ms for the socket to be readable
+            // Wait up to 100 ms for the socket to be readable, but keep
+            // connection setup waits interruptible in 50 ms slices.
             pfd.fd = s;
             pfd.events = POLLIN;
-            err = pollSockets(&pfd, 1, UDP_RECV_POLL_TIMEOUT_MS);
+            if (liConnectionAttemptHasControl()) {
+                err = pollSocketsInterruptibly(&pfd, 1, UDP_RECV_POLL_TIMEOUT_MS);
+            }
+            else {
+                err = pollSockets(&pfd, 1, UDP_RECV_POLL_TIMEOUT_MS);
+            }
             if (err <= 0) {
                 // Return if an error or timeout occurs
                 return err;
@@ -522,8 +615,15 @@ SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen, 
     int err;
 
     // Create a non-blocking TCP socket
-    s = createSocket(dstaddr->ss_family, SOCK_STREAM, IPPROTO_TCP, true);
+    s = createSocket(dstaddr->ss_family, SOCK_STREAM, IPPROTO_TCP, false);
     if (s == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    if (setSocketNonBlocking(s, true) != 0) {
+        err = (int)LastSocketError();
+        Limelog("Failed to make TCP socket non-blocking: %d\n", err);
+        closeSocket(s);
+        SetLastSocketError(err);
         return INVALID_SOCKET;
     }
 
@@ -574,7 +674,13 @@ SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen, 
     // Start connection
     memcpy(&addr, dstaddr, addrlen);
     SET_PORT(&addr, port);
-    err = connect(s, (struct sockaddr*) &addr, addrlen);
+#ifdef LC_TESTING
+    err = testConnectFunction != NULL ?
+          testConnectFunction(s, (struct sockaddr*)&addr, addrlen) :
+          connect(s, (struct sockaddr*)&addr, addrlen);
+#else
+    err = connect(s, (struct sockaddr*)&addr, addrlen);
+#endif
     if (err < 0) {
         err = (int)LastSocketError();
         if (err != EWOULDBLOCK && err != EAGAIN && err != EINPROGRESS) {
@@ -585,7 +691,9 @@ SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen, 
     // Wait for the connection to complete or the timeout to elapse
     pfd.fd = s;
     pfd.events = POLLOUT;
-    err = pollSockets(&pfd, 1, timeoutSec * 1000);
+    err = liConnectionAttemptHasControl() ?
+          pollSocketsInterruptibly(&pfd, 1, timeoutSec * 1000) :
+          pollSockets(&pfd, 1, timeoutSec * 1000);
     if (err < 0) {
         // pollSockets() failed
         err = LastSocketError();
@@ -735,9 +843,187 @@ static bool isPrivateNetworkAddressV4(struct sockaddr_in* address, bool matchCGN
     }
 }
 
+typedef int (*GetAddrInfoFunction)(const char* node, const char* service,
+                                   const struct addrinfo* hints, struct addrinfo** result);
+
+typedef struct _RESOLVER_TASK {
+    atomic_uint refCount;
+    atomic_bool completed;
+    char* host;
+    char* service;
+    struct addrinfo hints;
+    struct addrinfo* result;
+    int error;
+    GetAddrInfoFunction resolver;
+} RESOLVER_TASK;
+
+static atomic_bool resolverInFlight;
+
+static void releaseResolverTask(RESOLVER_TASK* task) {
+    if (atomic_fetch_sub_explicit(&task->refCount, 1, memory_order_acq_rel) == 1) {
+        if (task->result != NULL) {
+            freeaddrinfo(task->result);
+        }
+        free(task->host);
+        free(task->service);
+        free(task);
+    }
+}
+
+static void resolverThreadFunc(void* context) {
+    RESOLVER_TASK* task = (RESOLVER_TASK*)context;
+#if defined(LC_WINDOWS) && !defined(NXDK)
+    WSADATA socketData;
+    int startupError = WSAStartup(MAKEWORD(2, 0), &socketData);
+
+    if (startupError != 0) {
+        task->error = startupError;
+        atomic_store_explicit(&task->completed, true, memory_order_release);
+        atomic_store_explicit(&resolverInFlight, false, memory_order_release);
+        releaseResolverTask(task);
+        return;
+    }
+#endif
+
+    task->error = task->resolver(task->host, task->service, &task->hints, &task->result);
+    atomic_store_explicit(&task->completed, true, memory_order_release);
+    atomic_store_explicit(&resolverInFlight, false, memory_order_release);
+    releaseResolverTask(task);
+#if defined(LC_WINDOWS) && !defined(NXDK)
+    WSACleanup();
+#endif
+}
+
+static int acquireResolverSlot(void) {
+    for (;;) {
+        bool expected = false;
+        if (atomic_compare_exchange_weak_explicit(&resolverInFlight, &expected, true,
+                                                  memory_order_acq_rel, memory_order_acquire)) {
+            return 0;
+        }
+
+        int waitError = liGetConnectionAttemptWaitError();
+        if (waitError != 0) {
+            Limelog("Timed out or interrupted waiting for the host resolver slot (%d)\n", waitError);
+            return waitError;
+        }
+        PltSleepMs(CONNECTION_WAIT_SLICE_MS);
+    }
+}
+
+static int resolveHostNameInterruptibly(const char* host, const char* service, const struct addrinfo* hints,
+                                        RESOLVER_TASK** taskOut) {
+    RESOLVER_TASK* task;
+    PLT_THREAD thread;
+    int err;
+
+    err = liGetConnectionAttemptWaitError();
+    if (err != 0) {
+        return err;
+    }
+
+    err = acquireResolverSlot();
+    if (err != 0) {
+        return err;
+    }
+
+    task = (RESOLVER_TASK*)calloc(1, sizeof(*task));
+    if (task == NULL) {
+        atomic_store_explicit(&resolverInFlight, false, memory_order_release);
+        return ENOMEM;
+    }
+
+    task->host = strdup(host);
+    if (task->host == NULL) {
+        free(task);
+        atomic_store_explicit(&resolverInFlight, false, memory_order_release);
+        return ENOMEM;
+    }
+    if (service != NULL) {
+        task->service = strdup(service);
+        if (task->service == NULL) {
+            free(task->host);
+            free(task);
+            atomic_store_explicit(&resolverInFlight, false, memory_order_release);
+            return ENOMEM;
+        }
+    }
+    memcpy(&task->hints, hints, sizeof(task->hints));
+    atomic_init(&task->refCount, 2);
+    atomic_init(&task->completed, false);
+#ifdef LC_TESTING
+    task->resolver = testGetAddrInfoFunction != NULL ? testGetAddrInfoFunction : getaddrinfo;
+#else
+    task->resolver = getaddrinfo;
+#endif
+
+    err = PltCreateThread("HostResolver", resolverThreadFunc, task, &thread);
+    if (err != 0) {
+        atomic_store_explicit(&resolverInFlight, false, memory_order_release);
+        atomic_store_explicit(&task->refCount, 1, memory_order_relaxed);
+        releaseResolverTask(task);
+        return err;
+    }
+    PltDetachThread(&thread);
+
+    for (;;) {
+        if (atomic_load_explicit(&task->completed, memory_order_acquire)) {
+            err = liGetConnectionAttemptWaitError();
+            if (err == 0) {
+                *taskOut = task;
+                return task->error;
+            }
+
+            releaseResolverTask(task);
+            return err;
+        }
+
+        err = liGetConnectionAttemptWaitError();
+        if (err != 0) {
+            releaseResolverTask(task);
+            return err;
+        }
+
+        uint32_t waitMs = CONNECTION_WAIT_SLICE_MS;
+        uint32_t remainingMs = liGetConnectionAttemptRemainingTimeMs();
+        if (remainingMs != UINT32_MAX && remainingMs < waitMs) {
+            waitMs = remainingMs;
+        }
+        if (waitMs == 0) {
+            continue;
+        }
+        PltSleepMs((int)waitMs);
+    }
+}
+
+int liGetAddrInfo(const char* host, const char* service, const struct addrinfo* hints,
+                  struct addrinfo** result) {
+    RESOLVER_TASK* resolverTask = NULL;
+    int err;
+
+    *result = NULL;
+    if (liConnectionAttemptHasControl()) {
+        err = resolveHostNameInterruptibly(host, service, hints, &resolverTask);
+        if (err != 0) {
+            if (resolverTask != NULL) {
+                releaseResolverTask(resolverTask);
+            }
+            return err;
+        }
+
+        *result = resolverTask->result;
+        resolverTask->result = NULL;
+        releaseResolverTask(resolverTask);
+        return 0;
+    }
+
+    return getaddrinfo(host, service, hints, result);
+}
+
 int resolveHostName(const char* host, int family, int tcpTestPort, struct sockaddr_storage* addr, SOCKADDR_LEN* addrLen)
 {
     struct addrinfo hints, *res, *currentAddr;
+    RESOLVER_TASK* resolverTask = NULL;
     int err;
     bool needsFallbackV4 = false;
 
@@ -746,14 +1032,39 @@ int resolveHostName(const char* host, int family, int tcpTestPort, struct sockad
     hints.ai_flags = AI_ADDRCONFIG;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
-    err = getaddrinfo(host, NULL, &hints, &res);
+    if (liConnectionAttemptHasControl()) {
+        err = resolveHostNameInterruptibly(host, NULL, &hints, &resolverTask);
+        res = resolverTask != NULL ? resolverTask->result : NULL;
+    }
+    else {
+        err = getaddrinfo(host, NULL, &hints, &res);
+    }
     if (err != 0) {
-        Limelog("getaddrinfo(%s) failed: %d\n", host, err);
+        if (err == EINTR || err == ETIMEDOUT) {
+            Limelog("Host name resolution interrupted or timed out (%d)\n", err);
+        }
+        else {
+            Limelog("getaddrinfo(%s) failed: %d\n", host, err);
+        }
+        if (resolverTask != NULL) {
+            releaseResolverTask(resolverTask);
+        }
         return err;
     }
     else if (res == NULL) {
         Limelog("getaddrinfo(%s) returned success without addresses\n", host);
+        if (resolverTask != NULL) {
+            releaseResolverTask(resolverTask);
+        }
         return -1;
+    }
+
+    err = liGetConnectionAttemptWaitError();
+    if (err != 0) {
+        if (resolverTask != NULL) {
+            releaseResolverTask(resolverTask);
+        }
+        return err;
     }
 
 #ifdef AF_INET6
@@ -787,6 +1098,13 @@ int resolveHostName(const char* host, int family, int tcpTestPort, struct sockad
                                                  tcpTestPort & TCP_PORT_MASK,
                                                  TEST_PORT_TIMEOUT_SEC);
             if (testSocket == INVALID_SOCKET) {
+                err = liGetConnectionAttemptWaitError();
+                if (err != 0) {
+                    if (resolverTask != NULL) {
+                        releaseResolverTask(resolverTask);
+                    }
+                    return err;
+                }
                 // Try the next address
                 continue;
             }
@@ -799,10 +1117,18 @@ int resolveHostName(const char* host, int family, int tcpTestPort, struct sockad
         *addrLen = (SOCKADDR_LEN)currentAddr->ai_addrlen;
 
         freeaddrinfo(res);
+        if (resolverTask != NULL) {
+            resolverTask->result = NULL;
+            releaseResolverTask(resolverTask);
+        }
         return 0;
     }
 
     freeaddrinfo(res);
+    if (resolverTask != NULL) {
+        resolverTask->result = NULL;
+        releaseResolverTask(resolverTask);
+    }
 
     if (needsFallbackV4) {
         // Fallback to IPv4-only if we didn't find a working address (see comment above)
@@ -870,7 +1196,7 @@ bool isNat64SynthesizedAddress(struct sockaddr_storage* address) {
         hints.ai_flags = AI_ADDRCONFIG;
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_protocol = IPPROTO_TCP;
-        err = getaddrinfo("ipv4only.arpa.", NULL, &hints, &res);
+        err = liGetAddrInfo("ipv4only.arpa.", NULL, &hints, &res);
         if (err != 0) {
             Limelog("Client is not running in NAT64 environment (%d)\n", err);
             return false;

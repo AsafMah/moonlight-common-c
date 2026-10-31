@@ -121,6 +121,7 @@ target_include_directories(moonlight-common-c SYSTEM PRIVATE
 target_compile_definitions(moonlight-common-c PRIVATE HAS_SOCKLEN_T)
 
 if (BUILD_TESTING)
+  target_compile_definitions(moonlight-common-c PRIVATE LC_TESTING)
   add_executable(mat-live-tests tests/MatLiveTest.c src/MatLivePlayback.c src/MatReceiver.c src/MatDepacketizer.c)
   target_include_directories(mat-live-tests PRIVATE src)
   if(USE_MBEDTLS)
@@ -190,6 +191,15 @@ if (BUILD_TESTING)
       $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
     target_link_libraries(resolution-change-request-tests PRIVATE moonlight-common-c)
     add_test(NAME resolution-change-request-tests COMMAND resolution-change-request-tests)
+    add_executable(connection-cancellation-tests tests/ConnectionCancellationTest.c)
+    target_include_directories(connection-cancellation-tests PRIVATE
+      enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(connection-cancellation-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_DEFINITIONS>)
+    target_compile_options(connection-cancellation-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
+    target_link_libraries(connection-cancellation-tests PRIVATE moonlight-common-c)
+    add_test(NAME connection-cancellation-tests COMMAND connection-cancellation-tests)
     add_executable(controller-motion-queue-tests tests/ControllerMotionQueueTest.c)
     target_include_directories(controller-motion-queue-tests PRIVATE src enet/include)
     target_link_libraries(controller-motion-queue-tests PRIVATE moonlight-common-c)
@@ -217,6 +227,15 @@ if (BUILD_TESTING)
       $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
     target_link_libraries(control-stream-teardown-tests PRIVATE moonlight-common-c)
     add_test(NAME control-stream-teardown-tests COMMAND control-stream-teardown-tests)
+    add_executable(host-restart-protocol-tests tests/HostRestartProtocolTest.c)
+    target_include_directories(host-restart-protocol-tests PRIVATE
+      enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(host-restart-protocol-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_DEFINITIONS>)
+    target_compile_options(host-restart-protocol-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
+    target_link_libraries(host-restart-protocol-tests PRIVATE moonlight-common-c)
+    add_test(NAME host-restart-protocol-tests COMMAND host-restart-protocol-tests)
   endif()
 
   add_executable(control-stream-packet-tests
