@@ -1276,6 +1276,37 @@ typedef struct _RTP_VIDEO_FEC_STATS {
 #define LI_HAS_RTP_VIDEO_FEC_STATS 1
 void LiGetRTPVideoFecStats(PRTP_VIDEO_FEC_STATS stats);
 
+// Complete video frames that were received but then discarded locally, before
+// reaching the decoder: decode unit queue overflow, the queue flush done by a
+// DR_NEED_IDR decoder refresh, and the frames dropped while waiting for the
+// IDR frame that such a flush requested. These frames leave a frame-number gap
+// at the decoder that was not caused by the network. Each discard is recorded
+// as a range of frame numbers; a range that directly follows the previous one
+// is merged into it. The newest VIDEO_LOCAL_DISCARD_RANGE_COUNT ranges are kept:
+// range i (counting from 0 since the stream started) is in
+// ranges[i % VIDEO_LOCAL_DISCARD_RANGE_COUNT] for
+// max(0, rangesRecorded - VIDEO_LOCAL_DISCARD_RANGE_COUNT) <= i < rangesRecorded.
+// Everything is reset when the video stream is initialized.
+// LiGetVideoLocalDiscardStats() may be called from any thread and returns one
+// consistent snapshot. Called by the decoder after it receives a decode unit,
+// every discard of a frame older than that decode unit is already included.
+#define VIDEO_LOCAL_DISCARD_RANGE_COUNT 32
+
+typedef struct _VIDEO_LOCAL_DISCARD_RANGE {
+    uint32_t firstFrameNumber; // lowest discarded frame number
+    uint32_t lastFrameNumber;  // highest discarded frame number
+    uint32_t frames;           // frames discarded; less than the span if the network lost some inside it
+} VIDEO_LOCAL_DISCARD_RANGE, *PVIDEO_LOCAL_DISCARD_RANGE;
+
+typedef struct _VIDEO_LOCAL_DISCARD_STATS {
+    uint64_t framesDiscarded; // cumulative locally discarded frames
+    uint64_t rangesRecorded;  // cumulative ranges; a merge doesn't add one
+    VIDEO_LOCAL_DISCARD_RANGE ranges[VIDEO_LOCAL_DISCARD_RANGE_COUNT];
+} VIDEO_LOCAL_DISCARD_STATS, *PVIDEO_LOCAL_DISCARD_STATS;
+
+#define LI_HAS_VIDEO_LOCAL_DISCARD_STATS 1
+void LiGetVideoLocalDiscardStats(PVIDEO_LOCAL_DISCARD_STATS stats);
+
 // Returns the percentage of video frames lost by the network during the most
 // recent connection-status sampling interval. Decoder and renderer drops are
 // not included. The value is updated every 3 seconds after the stream settles.

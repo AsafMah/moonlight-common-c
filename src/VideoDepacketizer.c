@@ -1,6 +1,7 @@
 #include "Limelight-internal.h"
 
 #include <limits.h>
+#include <stdatomic.h>
 
 // Uncomment to test 3 byte Annex B start sequences with GFE
 //#define FORCE_3_BYTE_START_SEQUENCES
@@ -39,6 +40,51 @@ static uint64_t pyrowaveLastFailureLogUs;
 static LI_PYROWAVE_REASSEMBLY_RESULT pyrowaveLastFailureResult;
 static uint32_t pyrowaveReportedFecParityPackets;
 static uint32_t pyrowaveReportedIncompleteFrames;
+
+// Complete frames discarded by the client itself (see LiGetVideoLocalDiscardStats).
+// Written by the receive and decoder threads, so guarded by a spinlock that
+// is only ever held to copy this small struct.
+static _Atomic int localDiscardLock;
+static VIDEO_LOCAL_DISCARD_STATS localDiscards;
+// Set while the IDR wait was started by a local flush rather than by loss.
+static bool localDiscardIdrWait;
+
+static void lockLocalDiscards(void) {
+    while (atomic_exchange_explicit(&localDiscardLock, 1, memory_order_acquire) != 0) {
+    }
+}
+
+static void unlockLocalDiscards(void) {
+    atomic_store_explicit(&localDiscardLock, 0, memory_order_release);
+}
+
+static void recordLocalDiscard(uint32_t firstFrame, uint32_t lastFrame, uint32_t frames) {
+    if (frames == 0) {
+        return;
+    }
+
+    lockLocalDiscards();
+    localDiscards.framesDiscarded += frames;
+    // The IDR wait discards one frame at a time; merging keeps a long wait
+    // from pushing other ranges out. Frames after the previous range can't
+    // have reached the decoder yet, so no reader has consumed this range
+    // with a frame the merge adds.
+    PVIDEO_LOCAL_DISCARD_RANGE previous = localDiscards.rangesRecorded == 0 ? NULL :
+        &localDiscards.ranges[(localDiscards.rangesRecorded - 1) % VIDEO_LOCAL_DISCARD_RANGE_COUNT];
+    if (previous != NULL && previous->lastFrameNumber + 1 == firstFrame) {
+        previous->lastFrameNumber = lastFrame;
+        previous->frames += frames;
+    }
+    else {
+        PVIDEO_LOCAL_DISCARD_RANGE range =
+            &localDiscards.ranges[localDiscards.rangesRecorded % VIDEO_LOCAL_DISCARD_RANGE_COUNT];
+        range->firstFrameNumber = firstFrame;
+        range->lastFrameNumber = lastFrame;
+        range->frames = frames;
+        localDiscards.rangesRecorded++;
+    }
+    unlockLocalDiscards();
+}
 
 static void logPyrowaveReassemblyFailure(
         LI_PYROWAVE_REASSEMBLY_RESULT result,
@@ -117,6 +163,10 @@ void initializeVideoDepacketizer(int pktSize) {
     pyrowaveLastFailureResult = LI_PYROWAVE_REASSEMBLY_ACCEPTED;
     pyrowaveReportedFecParityPackets = 0;
     pyrowaveReportedIncompleteFrames = 0;
+    lockLocalDiscards();
+    memset(&localDiscards, 0, sizeof(localDiscards));
+    unlockLocalDiscards();
+    localDiscardIdrWait = false;
     LiPyrowaveReassemblyInitialize(&pyrowaveReassembly, 0);
     strictIdrFrameWait = NegotiatedVideoFormat != VIDEO_FORMAT_PYROWAVE &&
                          !isReferenceFrameInvalidationEnabled();
@@ -194,8 +244,44 @@ static void freeDecodeUnitList(PLINKED_BLOCKING_QUEUE_ENTRY entry) {
     }
 }
 
+// Free decode units flushed from the queue during the stream and report them
+// as local discards, together with an optional frame that was never queued.
+static void discardDecodeUnitList(PLINKED_BLOCKING_QUEUE_ENTRY entry,
+                                  bool hasUnqueuedFrame, uint32_t unqueuedFrame) {
+    uint32_t frames = 0;
+    uint32_t firstFrame = unqueuedFrame;
+    uint32_t lastFrame = unqueuedFrame;
+
+    for (PLINKED_BLOCKING_QUEUE_ENTRY current = entry; current != NULL; current = current->flink) {
+        const uint32_t frameNumber =
+            (uint32_t)((PQUEUED_DECODE_UNIT)current->data)->decodeUnit.frameNumber;
+        if (frames == 0) {
+            firstFrame = frameNumber;
+        }
+        lastFrame = frameNumber;
+        frames++;
+    }
+    if (hasUnqueuedFrame) {
+        if (frames == 0) {
+            firstFrame = unqueuedFrame;
+        }
+        lastFrame = unqueuedFrame;
+        frames++;
+    }
+
+    recordLocalDiscard(firstFrame, lastFrame, frames);
+    localDiscardIdrWait = true;
+    freeDecodeUnitList(entry);
+}
+
 void stopVideoDepacketizer(void) {
     LbqSignalQueueShutdown(&decodeUnitQueue);
+}
+
+void LiGetVideoLocalDiscardStats(PVIDEO_LOCAL_DISCARD_STATS stats) {
+    lockLocalDiscards();
+    *stats = localDiscards;
+    unlockLocalDiscards();
 }
 
 // Cleanup video depacketizer and free malloced memory
@@ -650,7 +736,7 @@ static void reassembleFrame(int frameNumber, bool frameIsLTR) {
                     free(qdu);
 
                     // Free all frames in the decode unit queue
-                    freeDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue));
+                    discardDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue), true, (uint32_t)frameNumber);
 
                     // Request an IDR frame to recover
                     LiRequestIdrFrame();
@@ -665,6 +751,9 @@ static void reassembleFrame(int frameNumber, bool frameIsLTR) {
 
             // Notify the control connection
             connectionReceivedCompleteFrame(frameNumber, frameIsLTR);
+
+            // Frames are flowing again, so a local IDR wait has ended
+            localDiscardIdrWait = false;
 
             // Clear frame drops
             consecutiveFrameDrops = 0;
@@ -981,7 +1070,7 @@ void requestDecoderRefresh(void) {
     waitingForIdrFrame = true;
 
     // Flush the decode unit queue
-    freeDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue));
+    discardDecodeUnitList(LbqFlushQueueItems(&decodeUnitQueue), false, 0);
 
     // Request the receive thread drop its state
     // on the next call. We can't do it here because
@@ -1092,6 +1181,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             }
 
             nextFrameNumber = frameIndex;
+
+            // Frames dropped from here on are a consequence of this loss
+            localDiscardIdrWait = false;
 
             // Wait until next complete frame
             waitingForNextSuccessfulFrame = true;
@@ -1457,6 +1549,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             }
 
             waitingForNextSuccessfulFrame = false;
+            if (localDiscardIdrWait) {
+                recordLocalDiscard(frameIndex, frameIndex, 1);
+            }
             dropFrameState();
             return;
         }
@@ -1478,6 +1573,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 dropStatePending = false;
             }
             else {
+                if (localDiscardIdrWait) {
+                    recordLocalDiscard(frameIndex, frameIndex, 1);
+                }
                 dropFrameState();
                 return;
             }
@@ -1494,6 +1592,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 void notifyFrameLost(unsigned int frameNumber, bool speculative) {
     // We may not invalidate frames that we've already received
     LC_ASSERT(frameNumber >= startFrameNumber);
+
+    // Frames dropped from here on are a consequence of this loss
+    localDiscardIdrWait = false;
 
     // PyroWave frames are self-contained intra frames and do not use the
     // legacy reference-frame invalidation state machine.  dropFrameState()
