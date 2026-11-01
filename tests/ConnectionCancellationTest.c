@@ -598,7 +598,103 @@ static void testResolverCancellationOwnershipAndRecovery(void) {
     liSetGetAddrInfoFunctionForTests(NULL);
 }
 
+static char sentData[2048];
+static int sendCalls;
+static int maximumSendLength;
+static int acceptedBytes;
+static int sendMode;
+
+static int fakeWritablePoll(struct pollfd* fds, int count, int timeoutMs) {
+    (void)timeoutMs;
+    if (count > 0) {
+        fds[0].revents = POLLOUT;
+    }
+    if (sendMode == 3) {
+        LiInterruptConnection();
+    }
+    return 1;
+}
+
+static int captureRtspSend(SOCKET socket, const char* data, int length, int flags) {
+    int accepted = length;
+    (void)socket;
+    (void)flags;
+    sendCalls++;
+    if (length > maximumSendLength) {
+        maximumSendLength = length;
+    }
+    if (sendMode == 1) {
+        if (sendCalls == 1 || sendCalls == 3) {
+            SetLastSocketError(sendCalls == 1 ? EWOULDBLOCK : EINTR);
+            return SOCKET_ERROR;
+        }
+        if (accepted > 73) {
+            accepted = 73;
+        }
+    }
+    memcpy(sentData + acceptedBytes, data, accepted);
+    acceptedBytes += accepted;
+    if (sendMode == 2) {
+        LiInterruptConnection();
+    }
+    return accepted;
+}
+
+static void resetRtspSendCapture(int mode) {
+    sendCalls = 0;
+    maximumSendLength = 0;
+    acceptedBytes = 0;
+    sendMode = mode;
+    memset(sentData, 0, sizeof(sentData));
+    LiPrepareConnectionAttempt(UINT32_MAX);
+}
+
+static void testRtspSendChunkingAndRetries(void) {
+    char request[1608] = "ANNOUNCE rtsp://localhost/stream RTSP/1.0\r\n\r\n";
+    for (size_t i = strlen(request); i < sizeof(request); i++) {
+        request[i] = (char)('A' + i % 26);
+    }
+    liSetConnectionSocketFunctionsForTests(NULL, fakeWritablePoll);
+    liSetRtspSendFunctionForTests(captureRtspSend);
+
+    resetRtspSendCapture(0);
+    CHECK(liSendRtspMessageForTests(INVALID_SOCKET, request, sizeof(request)) == sizeof(request));
+    CHECK(maximumSendLength <= TCPv4_MSS);
+    CHECK(sendCalls == (sizeof(request) + TCPv4_MSS - 1) / TCPv4_MSS);
+    CHECK(acceptedBytes == sizeof(request));
+    CHECK(memcmp(sentData, request, sizeof(request)) == 0);
+
+    resetRtspSendCapture(1);
+    CHECK(liSendRtspMessageForTests(INVALID_SOCKET, request, sizeof(request)) == sizeof(request));
+    CHECK(maximumSendLength <= TCPv4_MSS);
+    CHECK(sendCalls > 3);
+    CHECK(acceptedBytes == sizeof(request));
+    CHECK(memcmp(sentData, request, sizeof(request)) == 0);
+
+    resetRtspSendCapture(2);
+    CHECK(liSendRtspMessageForTests(INVALID_SOCKET, request, sizeof(request)) == SOCKET_ERROR);
+    CHECK(LastSocketError() == EINTR);
+    CHECK(sendCalls == 1);
+    CHECK(acceptedBytes == TCPv4_MSS);
+    CHECK(memcmp(sentData, request, acceptedBytes) == 0);
+
+    resetRtspSendCapture(3);
+    CHECK(liSendRtspMessageForTests(INVALID_SOCKET, request, sizeof(request)) == SOCKET_ERROR);
+    CHECK(LastSocketError() == EINTR);
+    CHECK(sendCalls == 0);
+
+    resetRtspSendCapture(0);
+    LiPrepareConnectionAttempt(0);
+    CHECK(liSendRtspMessageForTests(INVALID_SOCKET, request, sizeof(request)) == SOCKET_ERROR);
+    CHECK(LastSocketError() == ETIMEDOUT);
+    CHECK(sendCalls == 0);
+
+    liSetRtspSendFunctionForTests(NULL);
+    liSetConnectionSocketFunctionsForTests(NULL, NULL);
+}
+
 int main(void) {
+    testRtspSendChunkingAndRetries();
     testPreparedCancellationAndDeadline();
     testConnectWaitInterruptAndDeadlineClamp();
     testResolverCancellationOwnershipAndRecovery();

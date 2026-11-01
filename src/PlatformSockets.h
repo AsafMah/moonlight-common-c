@@ -138,6 +138,11 @@ SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen, 
 int getLocalAddressByUdpConnect(const struct sockaddr_storage* targetAddr, SOCKADDR_LEN targetAddrLen,  unsigned short targetPort,
                                 struct sockaddr_storage* localAddr, SOCKADDR_LEN* localAddrLen);
 int sendMtuSafe(SOCKET s, char* buffer, int size);
+#if defined(__vita__)
+#define TCPv4_MSS 512
+#else
+#define TCPv4_MSS 536
+#endif
 SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCKADDR_LEN addrLen, int bufferSize, int socketQosType);
 int enableNoDelay(SOCKET s);
 int setSocketNonBlocking(SOCKET s, bool enabled);
@@ -158,6 +163,9 @@ int liGetAddrInfo(const char* host, const char* service, const struct addrinfo* 
 int resolveHostName(const char* host, int family, int tcpTestPort, struct sockaddr_storage* addr, SOCKADDR_LEN* addrLen);
 
 #ifdef LC_TESTING
+typedef int (*LiTestRtspSendFunction)(SOCKET socket, const char* data, int length, int flags);
+void liSetRtspSendFunctionForTests(LiTestRtspSendFunction sendFunction);
+int liSendRtspMessageForTests(SOCKET socket, const char* data, int length);
 typedef int (*LiTestConnectFunction)(SOCKET socket, const struct sockaddr* address, SOCKADDR_LEN addressLength);
 typedef int (*LiTestPollFunction)(struct pollfd* pollFds, int pollFdsCount, int timeoutMs);
 typedef int (*LiTestGetAddrInfoFunction)(const char* node, const char* service,

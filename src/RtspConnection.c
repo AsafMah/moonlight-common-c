@@ -405,6 +405,14 @@ Exit:
 }
 
 // Send RTSP message and get response over TCP
+#ifdef LC_TESTING
+static LiTestRtspSendFunction testRtspSendFunction;
+
+void liSetRtspSendFunctionForTests(LiTestRtspSendFunction sendFunction) {
+    testRtspSendFunction = sendFunction;
+}
+#endif
+
 static int sendRtspMessageInterruptibly(SOCKET socket, const char* data, int length) {
     uint64_t operationDeadlineMs = PltGetMillis() + RTSP_CONNECT_TIMEOUT_SEC * 1000;
     int bytesSent = 0;
@@ -416,6 +424,8 @@ static int sendRtspMessageInterruptibly(SOCKET socket, const char* data, int len
         int waitError;
         int ready;
         int sent;
+        int bytesToSend = length - bytesSent > TCPv4_MSS ?
+                          TCPv4_MSS : length - bytesSent;
 
         if (nowMs >= operationDeadlineMs) {
             SetLastSocketError(ETIMEDOUT);
@@ -443,7 +453,13 @@ static int sendRtspMessageInterruptibly(SOCKET socket, const char* data, int len
             return -1;
         }
 
-        sent = (int)send(socket, &data[bytesSent], length - bytesSent, 0);
+#ifdef LC_TESTING
+        sent = testRtspSendFunction != NULL ?
+               testRtspSendFunction(socket, &data[bytesSent], bytesToSend, 0) :
+               (int)send(socket, &data[bytesSent], bytesToSend, 0);
+#else
+        sent = (int)send(socket, &data[bytesSent], bytesToSend, 0);
+#endif
         if (sent < 0) {
             int sendError = LastSocketError();
             if (sendError == EWOULDBLOCK || sendError == EAGAIN || sendError == EINTR) {
@@ -465,6 +481,12 @@ static int sendRtspMessageInterruptibly(SOCKET socket, const char* data, int len
 
     return bytesSent;
 }
+
+#ifdef LC_TESTING
+int liSendRtspMessageForTests(SOCKET socket, const char* data, int length) {
+    return sendRtspMessageInterruptibly(socket, data, length);
+}
+#endif
 
 static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response, int* error) {
     SOCK_RET err;
