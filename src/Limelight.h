@@ -783,6 +783,19 @@ typedef void(*ConnListenerDs5HapticsState)(uint16_t controllerNumber, const uint
 // function is not thread-safe. Pass NULL to unregister before the next connection.
 void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback);
 
+// Host interactive session lock state (Sunshine protocol extension 0x550E).
+#define LI_HOST_SESSION_UNLOCKED 0
+#define LI_HOST_SESSION_LOCKED   1
+
+// Called synchronously on the control receive thread with LI_HOST_SESSION_*:
+// once after the stream starts and again on every change. Only hosts that
+// advertise LI_FF_HOST_SESSION_STATE send these updates.
+typedef void(*ConnListenerHostSessionState)(uint8_t state);
+
+// Register before LiStartConnection(), while no connection is running. This
+// function is not thread-safe. Pass NULL to unregister before the next connection.
+void LiSetHostSessionStateCallback(ConnListenerHostSessionState callback);
+
 // ServerCodecModeSupport values
 #define SCM_H264            0x00000001
 #define SCM_HEVC            0x00000100
@@ -1393,6 +1406,7 @@ void LiRequestIdrFrame(void);
 #define LI_FF_DS5_HAPTICS_PCM         0x80 // Host can stream authored DualSense stereo PCM
 #define LI_FF_REMOTE_TEXT_CONTEXT     0x200 // Host can send InputPane/UIA text context updates
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
+#define LI_FF_HOST_SESSION_STATE      0x800 // Host can report its session lock state
 uint32_t LiGetHostFeatureFlags(void);
 
 // Update the client's SDR reference white (50-1000 nits inclusive) during an

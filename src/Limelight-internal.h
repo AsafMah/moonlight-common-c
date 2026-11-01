@@ -114,7 +114,9 @@ extern uint32_t EncryptionFeaturesEnabled;
 #define ML_FF_REMOTE_TEXT_CONTEXT 0x10 // Client accepts remote text context updates
 #define ML_FF_PYROWAVE 0x20 // Client accepts the experimental PyroWave video contract
 #define ML_FF_DS5_HAPTICS_STATE 0x40 // Client accepts absolute DS5 actuator controls (0x550D)
+#define ML_FF_HOST_SESSION_STATE 0x100 // Client accepts host session lock state updates (0x550E)
 extern ConnListenerDs5HapticsState Ds5HapticsStateCallback;
+extern ConnListenerHostSessionState HostSessionStateCallback;
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 

@@ -290,6 +290,9 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         if (RemoteTextContextCallback != NULL) {
             moonlightFeatureFlags |= ML_FF_REMOTE_TEXT_CONTEXT;
         }
+        if (HostSessionStateCallback != NULL) {
+            moonlightFeatureFlags |= ML_FF_HOST_SESSION_STATE;
+        }
         if ((StreamConfig.supportedVideoFormats & VIDEO_FORMAT_PYROWAVE) != 0 &&
                 (VideoCallbacks.capabilities & CAPABILITY_PYROWAVE) != 0) {
             moonlightFeatureFlags |= ML_FF_PYROWAVE;

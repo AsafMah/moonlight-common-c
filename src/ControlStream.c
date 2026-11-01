@@ -4,15 +4,21 @@
 #include "Ds5HapticsStream.h"
 #include "Ds5HapticsStateStream.h"
 #include "Ds5HapticsIrStream.h"
+#include "HostSessionStateStream.h"
 #include "RemoteTextContextStream.h"
 
 #include <math.h>
 #include <stdatomic.h>
 
 ConnListenerDs5HapticsState Ds5HapticsStateCallback;
+ConnListenerHostSessionState HostSessionStateCallback;
 
 void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback) {
     Ds5HapticsStateCallback = callback;
+}
+
+void LiSetHostSessionStateCallback(ConnListenerHostSessionState callback) {
+    HostSessionStateCallback = callback;
 }
 
 // This is a private header, but it just contains some time macros
@@ -1751,6 +1757,14 @@ static void controlReceiveThreadFunc(void* context) {
                         (const uint8_t*)(ctlHdr + 1), packetLength - (int)sizeof(*ctlHdr),
                         &controller, &state)) {
                     Ds5HapticsStateCallback(controller, state);
+                }
+            }
+            else if (ctlHdr->type == 0x550E) {
+                uint8_t sessionState;
+                if (HostSessionStateCallback != NULL && parseHostSessionState(
+                        (const uint8_t*)(ctlHdr + 1), packetLength - (int)sizeof(*ctlHdr),
+                        &sessionState)) {
+                    HostSessionStateCallback(sessionState);
                 }
             }
             else if (ctlHdr->type == packetTypes[IDX_DS5_HAPTICS_PCM]) {
