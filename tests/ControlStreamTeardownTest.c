@@ -29,9 +29,22 @@ static bool sendTestMessage(void) {
                            CTRL_CHANNEL_GENERIC, ENET_PACKET_FLAG_RELIABLE, false);
 }
 
+// Public senders such as LiRequestResolutionChange() (#48) only check peer
+// without enetMutex, then reach sendMessageEnet() through
+// sendMessageAndForget(). The racing sender resumes there, after passing that
+// check; the unlocked check itself is not covered here.
+static bool raceThroughPublicSender;
+
 static void racingSender(void* context) {
     PltSetEvent(&senderStarted);
-    senderResult = sendTestMessage();
+    if (raceThroughPublicSender) {
+        uint32_t payload[3] = { LE32(SS_DYNAMIC_PARAM_TYPE_RESOLUTION), LE32(1920), LE32(1080) };
+        senderResult = sendMessageAndForget(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], sizeof(payload), payload,
+                                            CTRL_CHANNEL_GENERIC, ENET_PACKET_FLAG_RELIABLE, false);
+    }
+    else {
+        senderResult = sendTestMessage();
+    }
     atomic_store(&senderFinished, true);
 }
 
@@ -53,18 +66,22 @@ int lingerShim(ENetHost* lingerHost, ENetPeer* lingerPeer, enet_uint32 lingerTim
     return 0;
 }
 
-int main(void) {
+static void raceTeardown(bool throughPublicSender) {
     ENetPeer fakePeer;
 
-    AppVersionQuad[0] = 7;
-    AppVersionQuad[1] = 1;
-    AppVersionQuad[2] = 415;
-    AppVersionQuad[3] = -1;
     CHECK(initializeControlStream() == 0);
+    raceThroughPublicSender = throughPublicSender;
+    lingerCalls = 0;
+    atomic_store(&senderFinished, false);
+    senderResult = true;
 
     // Teardown completed between a caller's unlocked check and sendMessageEnet().
     CHECK(peer == NULL && client == NULL);
     CHECK(!sendTestMessage());
+    if (throughPublicSender) {
+        // The public API's own connection check also fails cleanly afterwards.
+        CHECK(LiRequestResolutionChange(1920, 1080) == -3);
+    }
 
     // stopControlStream() joins these threads before tearing down ENet.
     CHECK(PltCreateThread("Loss stats", exitImmediately, NULL, &lossStatsThread) == 0);
@@ -89,6 +106,19 @@ int main(void) {
 
     PltCloseEvent(&senderStarted);
     destroyControlStream();
+}
+
+int main(void) {
+    AppVersionQuad[0] = 7;
+    AppVersionQuad[1] = 1;
+    AppVersionQuad[2] = 431;
+    AppVersionQuad[3] = -1;
+
+    // Encrypted Sunshine stream, so LiRequestResolutionChange() passes its gates.
+    encryptedControlStream = true;
+
+    raceTeardown(false);
+    raceTeardown(true);
 
     if (failures != 0) {
         fprintf(stderr, "%d control stream teardown checks failed\n", failures);
