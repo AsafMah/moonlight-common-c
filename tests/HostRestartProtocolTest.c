@@ -1,5 +1,6 @@
 #include "../src/ControlStream.c"
 
+#include <limits.h>
 #include <stdio.h>
 
 bool parseSdpAttributeToUInt(const char* payload, const char* name, uint32_t* val);
@@ -154,39 +155,43 @@ static void testEncryptedRestartTermination(void) {
     }
 
     memset(StreamConfig.remoteInputAesKey, 0x42, sizeof(StreamConfig.remoteInputAesKey));
-    plaintextHeader->type = LE16(0x0109);
     plaintextHeader->payloadLength = LE16(sizeof(restartReason));
     memcpy(plaintext + sizeof(*plaintextHeader), restartReason, sizeof(restartReason));
 
     encryptedHeader->encryptedHeaderType = LE16(0x0001);
-    encryptedHeader->length = LE16(sizeof(encryptedHeader->seq) + AES_GCM_TAG_LENGTH +
-                                    sizeof(plaintext));
-    encryptedHeader->seq = LE32(1);
-    iv[0] = 1;
+    encryptedHeader->length =
+        LE16(sizeof(encryptedHeader->seq) + AES_GCM_TAG_LENGTH + sizeof(plaintext));
     iv[10] = 'H';
     iv[11] = 'C';
-    if (!PltEncryptMessage(encryptionCtx, ALGORITHM_AES_GCM, 0,
-                           StreamConfig.remoteInputAesKey, sizeof(StreamConfig.remoteInputAesKey),
-                           iv, sizeof(iv),
-                           (uint8_t*)(encryptedHeader + 1), AES_GCM_TAG_LENGTH,
-                           plaintext, sizeof(plaintext),
-                           ((uint8_t*)(encryptedHeader + 1)) + AES_GCM_TAG_LENGTH,
-                           &encryptedLength)) {
-        CHECK(false);
-        destroyLoopback();
-        return;
-    }
+    // v6.5.3.219 uses this unchanged receiver. An unknown Foundation lock
+    // notification must not terminate it or prevent the next valid packet.
+    for (uint32_t seq = 1; seq <= 2; seq++) {
+        plaintextHeader->type = LE16(seq == 1 ? 0x550E : 0x0109);
+        encryptedHeader->seq = LE32(seq);
+        iv[0] = (uint8_t)seq;
+        encryptedLength = sizeof(plaintext);
+        if (!PltEncryptMessage(
+                encryptionCtx, ALGORITHM_AES_GCM, 0, (unsigned char*)StreamConfig.remoteInputAesKey,
+                sizeof(StreamConfig.remoteInputAesKey), iv, sizeof(iv),
+                (uint8_t*)(encryptedHeader + 1), AES_GCM_TAG_LENGTH, plaintext, sizeof(plaintext),
+                ((uint8_t*)(encryptedHeader + 1)) + AES_GCM_TAG_LENGTH, &encryptedLength)) {
+            CHECK(false);
+            destroyLoopback();
+            return;
+        }
 
-    packet = enet_packet_create(encryptedPacket, sizeof(encryptedPacket), ENET_PACKET_FLAG_RELIABLE);
-    CHECK(packet != NULL);
-    if (packet == NULL) {
-        return;
-    }
-    if (enet_peer_send(serverPeer, CTRL_CHANNEL_GENERIC, packet) != 0) {
-        CHECK(false);
-        enet_packet_destroy(packet);
-        destroyLoopback();
-        return;
+        packet =
+            enet_packet_create(encryptedPacket, sizeof(encryptedPacket), ENET_PACKET_FLAG_RELIABLE);
+        CHECK(packet != NULL);
+        if (packet == NULL) {
+            return;
+        }
+        if (enet_peer_send(serverPeer, CTRL_CHANNEL_GENERIC, packet) != 0) {
+            CHECK(false);
+            enet_packet_destroy(packet);
+            destroyLoopback();
+            return;
+        }
     }
     enet_host_flush(server);
 
@@ -209,8 +214,10 @@ static void testEncryptedRestartTermination(void) {
 
 static void testAllocations(void) {
     CHECK(SS_TERMINATION_HOST_RESTART_V1 == UINT32_C(0x53535201));
-    CHECK(LI_FF_HOST_RESTART == UINT32_C(0x00000800));
-    CHECK(ML_FF_HOST_RESTART == UINT32_C(0x00000100));
+    CHECK(LI_FF_HOST_RESTART == UINT32_C(0x00001000));
+    CHECK(ML_FF_HOST_RESTART == UINT32_C(0x00000200));
+    CHECK((LI_FF_HOST_RESTART & UINT32_C(0x00000800)) == 0);
+    CHECK((ML_FF_HOST_RESTART & UINT32_C(0x00000100)) == 0);
     CHECK(LI_HOST_RESTART_PROTOCOL_VERSION == 1);
     CHECK(ML_ERROR_HOST_RESTART == -5502);
     CHECK(ML_ERROR_HOST_RESTART != LI_ERR_UNSUPPORTED);
@@ -229,26 +236,23 @@ static void testAllocations(void) {
 }
 
 static void testHostRestartNegotiation(void) {
-    static const char supportedSdp[] =
-        "a=x-ss-general.featureFlags:2048 \r\n"
-        "a=x-ss-restart.protocolVersion:1 \r\n";
-    static const char missingVersionSdp[] = "a=x-ss-general.featureFlags:2048 \r\n";
-    static const char wrongVersionSdp[] =
-        "a=x-ss-general.featureFlags:2048 \r\n"
-        "a=x-ss-restart.protocolVersion:2 \r\n";
-    static const char malformedVersionSdp[] =
-        "a=x-ss-general.featureFlags:2048 \r\n"
-        "a=x-ss-restart.protocolVersion:1x \r\n";
-    static const char duplicateVersionSdp[] =
-        "a=x-ss-general.featureFlags:2048 \r\n"
-        "a=x-ss-restart.protocolVersion:1 \r\n"
-        "a=x-ss-restart.protocolVersion:1 \r\n";
+    static const char supportedSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+                                       "a=x-ss-restart.protocolVersion:1 \r\n";
+    static const char missingVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n";
+    static const char wrongVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+                                          "a=x-ss-restart.protocolVersion:2 \r\n";
+    static const char malformedVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+                                              "a=x-ss-restart.protocolVersion:1x \r\n";
+    static const char duplicateVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+                                              "a=x-ss-restart.protocolVersion:1 \r\n"
+                                              "a=x-ss-restart.protocolVersion:1 \r\n";
     static const char missingFeatureSdp[] =
         "a=x-ss-general.featureFlags:1024 \r\n"
         "a=x-ss-restart.protocolVersion:1 \r\n";
-    static const char malformedFeatureSdp[] =
-        "a=x-ss-general.featureFlags:2048garbage \r\n"
-        "a=x-ss-restart.protocolVersion:1 \r\n";
+    static const char malformedFeatureSdp[] = "a=x-ss-general.featureFlags:4096garbage \r\n"
+                                              "a=x-ss-restart.protocolVersion:1 \r\n";
+    static const char oldHostSdp[] = "a=x-ss-general.featureFlags:2048 \r\n"
+                                     "a=x-ss-restart.protocolVersion:1 \r\n";
 
     CHECK(liIsHostRestartProtocolSupported(supportedSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(supportedSdp, false));
@@ -258,6 +262,7 @@ static void testHostRestartNegotiation(void) {
     CHECK(!liIsHostRestartProtocolSupported(duplicateVersionSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(missingFeatureSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(malformedFeatureSdp, true));
+    CHECK(!liIsHostRestartProtocolSupported(oldHostSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(NULL, true));
 }
 
@@ -406,6 +411,7 @@ static void testClientAnnouncementNegotiation(void) {
     CHECK(generateRestartSdp(true, true, SS_ENC_CONTROL_V2, true, &clientFlags, &payload));
     if (payload != NULL) {
         CHECK((clientFlags & ML_FF_HOST_RESTART) != 0);
+        CHECK((clientFlags & UINT32_C(0x00000100)) == 0);
         CHECK(strstr(payload, "a=x-ml-restart.protocolVersion:1") != NULL);
         CHECK(HostRestartNegotiated);
         CHECK((EncryptionFeaturesEnabled & SS_ENC_CONTROL_V2) != 0);

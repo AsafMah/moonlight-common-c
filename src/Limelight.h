@@ -1426,10 +1426,10 @@ void LiRequestIdrFrame(void);
 #define LI_FF_REMOTE_TEXT_CONTEXT     0x200 // Host can send InputPane/UIA text context updates
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
 #define LI_FF_CLIENT_RESOLUTION_CHANGE 0x400 // LiSendResolutionChangeRequest() supported
-#define LI_FF_HOST_RESTART            0x800 // Host can signal an opted-in Core restart
+#define LI_FF_HOST_RESTART 0x1000 // Fork-reserved: opted-in Core restart (upstream owns 0x800)
 #define LI_HOST_RESTART_PROTOCOL_VERSION 1
 // Client ANNOUNCE feature bit; this is a separate namespace from LI_FF_*.
-#define ML_FF_HOST_RESTART            0x100
+#define ML_FF_HOST_RESTART 0x200 // Fork-reserved: restart opt-in (upstream owns 0x100)
 uint32_t LiGetHostFeatureFlags(void);
 
 // Returns true if the host offered PyroWave in its RTSP DESCRIBE response for
