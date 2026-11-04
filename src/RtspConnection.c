@@ -37,6 +37,31 @@ static bool useEnet;
 static char* controlStreamId;
 static bool encryptedRtspEnabled;
 
+static bool endpointHeaderEqual(const char* a, const char* b) {
+    while (*a && *b) {
+        unsigned char x = (unsigned char)*a++, y = (unsigned char)*b++;
+        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
+        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
+        if (x != y) return false;
+    }
+    return *a == *b;
+}
+
+static bool endpointRefreshConfirmed(POPTION_ITEM options) {
+    const char* value = NULL;
+    unsigned int count = 0;
+    for (; options; options = options->next) {
+        if (endpointHeaderEqual(options->option, "X-SS-Endpoint-Auto-Refresh")) {
+#ifdef FLAG_DUPLICATE_OPTION
+            if (options->flags & FLAG_DUPLICATE_OPTION) return false;
+#endif
+            value = options->content;
+            count++;
+        }
+    }
+    return count == 1 && value && !strcmp(value, "1");
+}
+
 static PPLT_CRYPTO_CONTEXT encryptionCtx;
 static PPLT_CRYPTO_CONTEXT decryptionCtx;
 static uint32_t encryptionSequenceNumber;
@@ -1139,6 +1164,8 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
     AudioEncryptionEnabled = false;
     MicPortNumber = 0;
     encryptedRtspEnabled = serverInfo->rtspSessionUrl && strstr(serverInfo->rtspSessionUrl, "rtspenc://");
+    EndpointRefreshRequested = false;
+    LiSetEndpointAutoRefreshEnabled(false);
     encryptionCtx = PltCreateCryptoContext();
     decryptionCtx = PltCreateCryptoContext();
 
@@ -1408,6 +1435,12 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         if (!parseSdpAttributeToUInt(response.payload, "x-ss-general.featureFlags", &SunshineFeatureFlags)) {
             SunshineFeatureFlags = 0;
         }
+        {
+            unsigned int refreshVersion = 0;
+            EndpointRefreshRequested = encryptedRtspEnabled &&
+                (SunshineFeatureFlags & LI_FF_ENDPOINT_AUTO_REFRESH) &&
+                parseSdpAttributeToUInt(response.payload, "x-ss-general.endpointAutoRefreshVersion", &refreshVersion) && refreshVersion == 1;
+        }
 
         // Look for the Sunshine encryption flags in the SDP attributes
         if (!parseSdpAttributeToUInt(response.payload, "x-ss-general.encryptionSupported", &EncryptionFeaturesSupported)) {
@@ -1476,7 +1509,12 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
             // Let the audio stream know the port number is now finalized.
             // NB: This is needed because audio stream init happens before RTSP,
             // which is not the case for the video stream.
-            notifyAudioPortNegotiationComplete();
+            ret = notifyAudioPortNegotiationComplete();
+            if (ret != 0) {
+                Limelog("Failed to prepare audio transport: %d\n", ret);
+                freeMessage(&response);
+                goto Exit;
+            }
 
             sessionId = getOptionContent(response.options, "Session");
 
@@ -1683,6 +1721,16 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
             ret = response.message.response.statusCode;
             freeMessage(&response);
             goto Exit;
+        }
+
+        if (EndpointRefreshRequested) {
+            if (!endpointRefreshConfirmed(response.options)) {
+                Limelog("endpoint_auto_refresh: missing authenticated confirmation\n");
+                ret = -1;
+                freeMessage(&response);
+                goto Exit;
+            }
+            LiSetEndpointAutoRefreshEnabled(true);
         }
 
         // Sunshine dynamic HDR negotiation result. Hosts without the

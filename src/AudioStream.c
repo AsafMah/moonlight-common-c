@@ -1,4 +1,5 @@
 #include "Limelight-internal.h"
+#include "EndpointRefresh.h"
 #include "MatLivePlayback.h"
 #include <stdatomic.h>
 static atomic_bool matInputEnded;
@@ -36,6 +37,7 @@ static void consumeAudio(char* data,int size) {
 }
 
 static SOCKET rtpSocket = INVALID_SOCKET;
+static LI_ENDPOINT_REFRESH endpointRefresh;
 
 static LINKED_BLOCKING_QUEUE packetQueue;
 static RTP_AUDIO_QUEUE rtpAudioQueue;
@@ -91,7 +93,10 @@ static void AudioPingThreadProc(void* context) {
     // to sending a packet prior to the host PC binding to that port.
     int pingCount = 0;
     while (!PltIsThreadInterrupted(&udpPingThread)) {
-        if (AudioPingPayload.payload[0] != 0) {
+        if (LiErClientPing(&endpointRefresh)) {
+            // Negotiated keepalive; audio may still be waiting for ANNOUNCE.
+        }
+        else if (AudioPingPayload.payload[0] != 0) {
             pingCount++;
             AudioPingPayload.sequenceNumber = BE32(pingCount);
 
@@ -142,6 +147,12 @@ int notifyAudioPortNegotiationComplete(void) {
         return LastSocketFail();
     }
     LiRecordStreamSocket(rtpSocket, STREAM_SOCKET_SLOT_AUDIO);
+    if (!LiErClientInitialize(&endpointRefresh, rtpSocket, LI_ER_AUDIO, AudioPingPayload.payload,
+            AudioPortNumber, SOCK_QOS_TYPE_AUDIO, 0)) {
+        closeSocket(rtpSocket);
+        rtpSocket = INVALID_SOCKET;
+        return -1;
+    }
 
     // We may receive audio before our threads are started, but that's okay. We'll
     // drop the first 1 second of audio packets to catch up with the backlog.
@@ -183,6 +194,7 @@ void destroyAudioStream(void) {
         rtpSocket = INVALID_SOCKET;
     }
 
+    LiErClientDestroy(&endpointRefresh);
     PltDestroyCryptoContext(audioDecryptionCtx);
     freePacketList(LbqDestroyLinkedBlockingQueue(&packetQueue));
     RtpaCleanupQueue(&rtpAudioQueue);
@@ -326,7 +338,12 @@ static void AudioReceiveThreadProc(void* context) {
             }
         }
 
-        packet->header.size = recvUdpSocket(rtpSocket, &packet->data[0], MAX_PACKET_SIZE, useSelect);
+        packet->header.size = LiErClientRecv(&endpointRefresh, &rtpSocket, &packet->data[0], MAX_PACKET_SIZE, useSelect);
+        if (packet->header.size == LI_ER_RECV_HANDLED) continue;
+        if (packet->header.size == LI_ER_RECV_FAILED) {
+            ListenerCallbacks.connectionTerminated(ML_ERROR_ENDPOINT_REFRESH_FAILED);
+            break;
+        }
         if (packet->header.size < 0) {
             Limelog("Audio Receive: recvUdpSocket() failed: %d\n", (int)LastSocketError());
             ListenerCallbacks.connectionTerminated(LastSocketFail());
@@ -381,6 +398,7 @@ static void AudioReceiveThreadProc(void* context) {
         rtp->ssrc = BE32(rtp->ssrc);
 
         queueStatus = RtpaAddPacket(&rtpAudioQueue, (PRTP_PACKET)&packet->data[0], (uint16_t)packet->header.size);
+        if (queueStatus != 0) LiErClientMedia(&endpointRefresh);
         if (RTPQ_HANDLE_NOW(queueStatus)) {
             if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
                 if (!queuePacketToLbq(&packet)) {

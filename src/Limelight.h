@@ -554,6 +554,10 @@ typedef void(*ConnListenerConnectionTerminated)(int errorCode);
 // desktop resolution and streaming resolution with HDR enabled. This value is
 // supported on GFE 3.22+.
 #define ML_ERROR_FRAME_CONVERSION -104
+// A negotiated control-only session lost its transport without a termination message.
+#define ML_ERROR_CONTROL_TRANSPORT_TIMEOUT -105
+// Authenticated endpoint recovery exhausted its bounded socket replacement attempts.
+#define ML_ERROR_ENDPOINT_REFRESH_FAILED -106
 
 // This callback is invoked to log debug message
 typedef void(*ConnListenerLogMessage)(const char* format, ...);
@@ -1410,6 +1414,9 @@ void LiRequestIdrFrame(void);
 #define LI_FF_REMOTE_TEXT_CONTEXT     0x200 // Host can send InputPane/UIA text context updates
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
 #define LI_FF_HOST_SESSION_STATE      0x800 // Host can report its session lock state
+#define LI_FF_ENDPOINT_AUTO_REFRESH  0x400 // Authenticated UDP endpoint migration v1
+// True only for a live session with explicit encrypted-RTSP confirmation.
+bool LiIsEndpointAutoRefreshEnabled(void);
 uint32_t LiGetHostFeatureFlags(void);
 
 // Update the client's SDR reference white (50-1000 nits inclusive) during an

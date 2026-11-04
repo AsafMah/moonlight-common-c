@@ -274,6 +274,10 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     if (IS_SUNSHINE()) {
         // Send client feature flags to Sunshine hosts
         uint32_t moonlightFeatureFlags = ML_FF_FEC_STATUS | ML_FF_SESSION_ID_V1;
+        if (EndpointRefreshRequested) {
+            moonlightFeatureFlags |= ML_FF_ENDPOINT_AUTO_REFRESH;
+            err |= addAttributeString(&optionHead, "x-ml-general.endpointAutoRefreshVersion", "1");
+        }
         if (ListenerCallbacks.ds5HapticsPcm != NULL) {
             moonlightFeatureFlags |= ML_FF_DS5_HAPTICS_PCM;
             if (Ds5HapticsStateCallback != NULL) {

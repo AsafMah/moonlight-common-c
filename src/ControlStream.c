@@ -1607,7 +1607,8 @@ static void controlReceiveThreadFunc(void* context) {
 
             err = LastSocketFail();
             Limelog("Control stream connection failed: %d\n", err);
-            ListenerCallbacks.connectionTerminated(err);
+            ListenerCallbacks.connectionTerminated(StreamConfig.controlOnly && LiIsEndpointAutoRefreshEnabled() ?
+                ML_ERROR_CONTROL_TRANSPORT_TIMEOUT : err);
             return;
         }
 
@@ -1878,7 +1879,8 @@ static void controlReceiveThreadFunc(void* context) {
         }
         else if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
             Limelog("Control stream received unexpected disconnect event\n");
-            ListenerCallbacks.connectionTerminated(-1);
+            ListenerCallbacks.connectionTerminated(StreamConfig.controlOnly && LiIsEndpointAutoRefreshEnabled() ?
+                ML_ERROR_CONTROL_TRANSPORT_TIMEOUT : -1);
             return;
         }
     }
@@ -1948,7 +1950,8 @@ static void lossStatsThreadFunc(void* context) {
                                       ENET_PACKET_FLAG_RELIABLE,
                                       false)) {
                 Limelog("Loss Stats: Transaction failed: %d\n", (int)LastSocketError());
-                ListenerCallbacks.connectionTerminated(LastSocketFail());
+                ListenerCallbacks.connectionTerminated(StreamConfig.controlOnly && LiIsEndpointAutoRefreshEnabled() ?
+                    ML_ERROR_CONTROL_TRANSPORT_TIMEOUT : LastSocketFail());
                 return;
             }
 

@@ -126,6 +126,7 @@ void addrToUrlSafeString(struct sockaddr_storage* addr, char* string, size_t str
 #define STREAM_SOCKET_SLOT_CONTROL 2
 
 void LiRecordStreamSocket(SOCKET s, int slot);
+void LiReplaceStreamSocket(SOCKET previous, SOCKET replacement, int slot);
 void LiClearStreamSockets(void);
 
 SOCKET createSocket(int addressFamily, int socketType, int protocol, bool nonBlocking);
