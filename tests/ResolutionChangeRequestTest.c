@@ -91,6 +91,10 @@ int main(void) {
     CHECK(LiSendResolutionChangeRequest(16386, 720) == LI_RESOLUTION_CHANGE_ERR_INVALID);
     CHECK(LiSendResolutionChangeRequest(1280, 16386) == LI_RESOLUTION_CHANGE_ERR_INVALID);
 
+    AppVersionQuad[3] = 0; // A non-Sunshine host cannot enable the API by spoofing 0x400.
+    CHECK(LiSendResolutionChangeRequest(1280, 720) == LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED);
+    AppVersionQuad[3] = -1;
+
     SunshineFeatureFlags = ~(uint32_t)LI_FF_CLIENT_RESOLUTION_CHANGE;
     CHECK(LiSendResolutionChangeRequest(1280, 720) == LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED);
     SunshineFeatureFlags = LI_FF_CLIENT_RESOLUTION_CHANGE;

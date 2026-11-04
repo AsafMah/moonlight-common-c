@@ -2286,7 +2286,7 @@ int LiSendResolutionChangeRequest(unsigned int width, unsigned int height) {
     if (width < 2 || width > 16384 || height < 2 || height > 16384) {
         return LI_RESOLUTION_CHANGE_ERR_INVALID;
     }
-    if ((SunshineFeatureFlags & LI_FF_CLIENT_RESOLUTION_CHANGE) == 0 ||
+    if (!IS_SUNSHINE() || (SunshineFeatureFlags & LI_FF_CLIENT_RESOLUTION_CHANGE) == 0 ||
             AppVersionQuad[0] < 5 || packetTypes == NULL ||
             packetTypes[IDX_DYNAMIC_PARAM_CHANGE] == -1) {
         return LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED;
