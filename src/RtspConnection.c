@@ -1690,7 +1690,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         // outcome (DYNAMIC_HDR_FORMAT_NONE) rather than an error.
         if (NegotiatedAudioCodec == AUDIO_CODEC_OPUS) {
             const char* confirmedCodec = getOptionContent(response.options,"X-SS-Audio-Codec");
-            if ((confirmedCodec && (strcmp(confirmedCodec,"opus") ||
+            if ((confirmedCodec && (!matHeaderEqual(confirmedCodec,"opus") ||
                     !uniqueMatOption(response.options,"X-SS-Audio-Codec"))) ||
                 getOptionContent(response.options,"X-SS-Mat-SHA256") ||
                 getOptionContent(response.options,"X-SS-Mat-Cycles") ||
