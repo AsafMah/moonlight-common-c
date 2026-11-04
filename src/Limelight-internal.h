@@ -105,7 +105,9 @@ extern uint32_t EncryptionFeaturesEnabled;
 
 #define IS_SUNSHINE() (AppVersionQuad[3] < 0)
 
-// Client feature flags for x-ml-general.featureFlags SDP attribute
+// Client feature flags for x-ml-general.featureFlags SDP attribute.
+// Existing fork assignments are frozen. New fork-only features allocate from
+// 0x8000 downward; see docs/protocol-extension-registry.md.
 #define ML_FF_FEC_STATUS 0x01 // Client sends SS_FRAME_FEC_STATUS for frame losses
 #define ML_FF_SESSION_ID_V1 0x02 // Client supports X-SS-Ping-Payload and X-SS-Connect-Data
 #define ML_FF_DS5_HAPTICS_PCM 0x04 // Client accepts authored DualSense PCM on the control stream

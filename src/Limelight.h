@@ -1398,6 +1398,9 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata);
 void LiRequestIdrFrame(void);
 
 // This function returns any extended feature flags supported by the host.
+// Existing fork assignments are frozen. New fork-only features allocate from
+// 0x8000 downward; 0x55F0-0x55FF is reserved for private opcodes. See
+// docs/protocol-extension-registry.md.
 #define LI_FF_PEN_TOUCH_EVENTS        0x01 // LiSendTouchEvent()/LiSendPenEvent() supported
 #define LI_FF_CONTROLLER_TOUCH_EVENTS 0x02 // LiSendControllerTouchEvent() supported
 #define LI_FF_TOUCHPAD_EVENTS         0x10 // LiSendTouchpadEvent() supported
