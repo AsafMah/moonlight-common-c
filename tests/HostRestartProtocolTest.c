@@ -214,8 +214,8 @@ static void testEncryptedRestartTermination(void) {
 
 static void testAllocations(void) {
     CHECK(SS_TERMINATION_HOST_RESTART_V1 == UINT32_C(0x53535201));
-    CHECK(LI_FF_HOST_RESTART == UINT32_C(0x00001000));
-    CHECK(ML_FF_HOST_RESTART == UINT32_C(0x00000200));
+    CHECK(LI_FF_HOST_RESTART == UINT32_C(0x00008000));
+    CHECK(ML_FF_HOST_RESTART == UINT32_C(0x00008000));
     CHECK((LI_FF_HOST_RESTART & UINT32_C(0x00000800)) == 0);
     CHECK((ML_FF_HOST_RESTART & UINT32_C(0x00000100)) == 0);
     CHECK(LI_HOST_RESTART_PROTOCOL_VERSION == 1);
@@ -236,21 +236,23 @@ static void testAllocations(void) {
 }
 
 static void testHostRestartNegotiation(void) {
-    static const char supportedSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+    static const char supportedSdp[] = "a=x-ss-general.featureFlags:32768 \r\n"
                                        "a=x-ss-restart.protocolVersion:1 \r\n";
-    static const char missingVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n";
-    static const char wrongVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+    static const char missingVersionSdp[] = "a=x-ss-general.featureFlags:32768 \r\n";
+    static const char wrongVersionSdp[] = "a=x-ss-general.featureFlags:32768 \r\n"
                                           "a=x-ss-restart.protocolVersion:2 \r\n";
-    static const char malformedVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+    static const char malformedVersionSdp[] = "a=x-ss-general.featureFlags:32768 \r\n"
                                               "a=x-ss-restart.protocolVersion:1x \r\n";
-    static const char duplicateVersionSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+    static const char duplicateVersionSdp[] = "a=x-ss-general.featureFlags:32768 \r\n"
                                               "a=x-ss-restart.protocolVersion:1 \r\n"
                                               "a=x-ss-restart.protocolVersion:1 \r\n";
     static const char missingFeatureSdp[] =
         "a=x-ss-general.featureFlags:1024 \r\n"
         "a=x-ss-restart.protocolVersion:1 \r\n";
-    static const char malformedFeatureSdp[] = "a=x-ss-general.featureFlags:4096garbage \r\n"
+    static const char malformedFeatureSdp[] = "a=x-ss-general.featureFlags:32768garbage \r\n"
                                               "a=x-ss-restart.protocolVersion:1 \r\n";
+    static const char oldRestartBitSdp[] = "a=x-ss-general.featureFlags:4096 \r\n"
+                                           "a=x-ss-restart.protocolVersion:1 \r\n";
     static const char oldHostSdp[] = "a=x-ss-general.featureFlags:2048 \r\n"
                                      "a=x-ss-restart.protocolVersion:1 \r\n";
 
@@ -262,6 +264,7 @@ static void testHostRestartNegotiation(void) {
     CHECK(!liIsHostRestartProtocolSupported(duplicateVersionSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(missingFeatureSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(malformedFeatureSdp, true));
+    CHECK(!liIsHostRestartProtocolSupported(oldRestartBitSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(oldHostSdp, true));
     CHECK(!liIsHostRestartProtocolSupported(NULL, true));
 }

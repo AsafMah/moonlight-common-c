@@ -1417,6 +1417,9 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata);
 void LiRequestIdrFrame(void);
 
 // This function returns any extended feature flags supported by the host.
+// Existing fork assignments are frozen. New fork-only features allocate from
+// 0x8000 downward; 0x55F0-0x55FF is reserved for private opcodes. See
+// docs/protocol-extension-registry.md.
 #define LI_FF_PEN_TOUCH_EVENTS        0x01 // LiSendTouchEvent()/LiSendPenEvent() supported
 #define LI_FF_CONTROLLER_TOUCH_EVENTS 0x02 // LiSendControllerTouchEvent() supported
 #define LI_FF_TOUCHPAD_EVENTS         0x10 // LiSendTouchpadEvent() supported
@@ -1426,10 +1429,10 @@ void LiRequestIdrFrame(void);
 #define LI_FF_REMOTE_TEXT_CONTEXT     0x200 // Host can send InputPane/UIA text context updates
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
 #define LI_FF_CLIENT_RESOLUTION_CHANGE 0x400 // LiSendResolutionChangeRequest() supported
-#define LI_FF_HOST_RESTART 0x1000 // Fork-reserved: opted-in Core restart (upstream owns 0x800)
+#define LI_FF_HOST_RESTART 0x8000            // Fork-reserved: opted-in Core restart
 #define LI_HOST_RESTART_PROTOCOL_VERSION 1
 // Client ANNOUNCE feature bit; this is a separate namespace from LI_FF_*.
-#define ML_FF_HOST_RESTART 0x200 // Fork-reserved: restart opt-in (upstream owns 0x100)
+#define ML_FF_HOST_RESTART 0x8000 // Fork-reserved: restart opt-in
 uint32_t LiGetHostFeatureFlags(void);
 
 // Returns true if the host offered PyroWave in its RTSP DESCRIBE response for
