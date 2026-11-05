@@ -74,6 +74,7 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `LI_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Advertises authenticated UDP endpoint migration v1. The host enables it only after the client requests version 1 over encrypted RTSP. |
+| `LI_FF_CLIENT_RESOLUTION_CHANGE` | `0x400` | Advertises that the host applies `LiRequestResolutionChange()` (`0x5506` RESOLUTION) requests for the session. Allocated before this registry and already used by AlkaidLab/foundation-sunshine#729, qiin2333/moonlight-qt#104 and qiin2333/moonlight-vplus#354; advisory only, the sender does not require it. |
 
 ## Assigned control opcodes
 
