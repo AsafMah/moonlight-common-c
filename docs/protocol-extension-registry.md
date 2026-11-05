@@ -69,7 +69,9 @@ reused or renumbered.
 New fork-only host flags are allocated from `0x8000` downward. Reserve the
 next unused high bit before implementation and add it to this table.
 
-There are currently no new host-side allocations in this section.
+| Identifier | Value | Used for |
+| --- | ---: | --- |
+| `LI_FF_CLIENT_RESOLUTION_CHANGE` | `0x400` | Advertises that the host applies `LiRequestResolutionChange()` (`0x5506` RESOLUTION) requests for the session. Allocated before this registry and already used by AlkaidLab/foundation-sunshine#729, qiin2333/moonlight-qt#104 and qiin2333/moonlight-vplus#354; advisory only, the sender does not require it. |
 
 ## Assigned control opcodes
 
