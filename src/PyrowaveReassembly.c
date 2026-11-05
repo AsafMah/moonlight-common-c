@@ -18,6 +18,10 @@ static void clearFrameStorage(LI_PYROWAVE_REASSEMBLY_STATE* state) {
         return;
     }
 
+    if (state->blockCount != 0 && state->receivedCount < state->blockCount) {
+        ++state->incompleteFramesDropped;
+    }
+
     if (state->blocks != NULL) {
         for (index = 0; index < state->blockCount; ++index) {
             free(state->blocks[index]);
@@ -55,6 +59,7 @@ static void clearFrameStorage(LI_PYROWAVE_REASSEMBLY_STATE* state) {
     state->headerReceived = false;
     state->fecEnabled = false;
     state->deadlineUs = 0;
+    state->fecRecoveredCount = 0;
 }
 
 static void clearStorage(LI_PYROWAVE_REASSEMBLY_STATE* state) {
@@ -206,6 +211,7 @@ static void tryRecoverGroup(
     state->blockLengths[missing] = recoveredLength;
     state->received[missing] = 1;
     ++state->receivedCount;
+    ++state->fecRecoveredCount;
     state->totalPayloadLength += recoveredLength;
 }
 
@@ -291,6 +297,7 @@ LI_PYROWAVE_REASSEMBLY_RESULT LiPyrowaveReassemblyPush(
         state->fecParityBlocks[header->fecGroupIndex] = block;
         state->fecParityLengths[header->fecGroupIndex] = header->payloadLength;
         state->fecParityReceived[header->fecGroupIndex] = 1;
+        ++state->fecParityPacketsReceived;
         tryRecoverGroup(state, header->fecGroupIndex);
     }
     else {

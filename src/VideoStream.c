@@ -32,6 +32,9 @@ static bool receivedDataFromPeer;
 static uint64_t firstDataTimeMs;
 static bool receivedFullFrame;
 static _Atomic uint64_t rtpVideoBytesReceived;
+static _Atomic uint64_t videoFecFramesRecovered;
+static _Atomic uint64_t videoFecFramesUnrecoverable;
+static _Atomic uint64_t videoFecPacketsReceived;
 
 // We can't request an IDR frame until the depacketizer knows
 // that a packet was lost. This timeout bounds the time that
@@ -53,6 +56,9 @@ void initializeVideoStream(void) {
     firstDataTimeMs = 0;
     receivedFullFrame = false;
     atomic_store_explicit(&rtpVideoBytesReceived, 0, memory_order_relaxed);
+    atomic_store_explicit(&videoFecFramesRecovered, 0, memory_order_relaxed);
+    atomic_store_explicit(&videoFecFramesUnrecoverable, 0, memory_order_relaxed);
+    atomic_store_explicit(&videoFecPacketsReceived, 0, memory_order_relaxed);
 }
 
 // Clean up the video stream
@@ -442,4 +448,27 @@ const RTP_VIDEO_STATS* LiGetRTPVideoStats(void) {
 
 uint64_t LiGetRTPVideoBytesReceived(void) {
     return atomic_load_explicit(&rtpVideoBytesReceived, memory_order_relaxed);
+}
+
+// Called by the RTP FEC queue and the PyroWave depacketizer
+void recordVideoFecStats(uint32_t framesRecovered, uint32_t framesUnrecoverable, uint32_t fecPacketsReceived) {
+    if (framesRecovered != 0) {
+        atomic_fetch_add_explicit(&videoFecFramesRecovered, framesRecovered, memory_order_relaxed);
+    }
+    if (framesUnrecoverable != 0) {
+        atomic_fetch_add_explicit(&videoFecFramesUnrecoverable, framesUnrecoverable, memory_order_relaxed);
+    }
+    if (fecPacketsReceived != 0) {
+        atomic_fetch_add_explicit(&videoFecPacketsReceived, fecPacketsReceived, memory_order_relaxed);
+    }
+}
+
+void LiGetRTPVideoFecStats(PRTP_VIDEO_FEC_STATS stats) {
+    if (stats == NULL) {
+        return;
+    }
+
+    stats->framesRecovered = atomic_load_explicit(&videoFecFramesRecovered, memory_order_relaxed);
+    stats->framesUnrecoverable = atomic_load_explicit(&videoFecFramesUnrecoverable, memory_order_relaxed);
+    stats->fecPacketsReceived = atomic_load_explicit(&videoFecPacketsReceived, memory_order_relaxed);
 }
