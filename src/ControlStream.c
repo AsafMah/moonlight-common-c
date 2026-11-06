@@ -4,15 +4,21 @@
 #include "Ds5HapticsStream.h"
 #include "Ds5HapticsStateStream.h"
 #include "Ds5HapticsIrStream.h"
+#include "DisplayGroupStream.h"
 #include "RemoteTextContextStream.h"
 
 #include <math.h>
 #include <stdatomic.h>
 
 ConnListenerDs5HapticsState Ds5HapticsStateCallback;
+static ConnListenerDisplayGroup DisplayGroupCallback;
 
 void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback) {
     Ds5HapticsStateCallback = callback;
+}
+
+void LiSetDisplayGroupCallback(ConnListenerDisplayGroup callback) {
+    DisplayGroupCallback = callback;
 }
 
 // This is a private header, but it just contains some time macros
@@ -1801,6 +1807,17 @@ static void controlReceiveThreadFunc(void* context) {
                         (const uint8_t*)(ctlHdr + 1), packetLength - (int)sizeof(*ctlHdr),
                         &controller, &state)) {
                     Ds5HapticsStateCallback(controller, state);
+                }
+            }
+            else if (ctlHdr->type == 0x55F0) {
+                // Display group layout. Malformed or unknown versions are
+                // dropped without affecting the stream.
+                DISPLAY_GROUP_INFO displayGroup;
+                if (DisplayGroupCallback != NULL &&
+                        parseDisplayGroupMessage((const uint8_t*)(ctlHdr + 1),
+                                                 packetLength - (int)sizeof(*ctlHdr),
+                                                 &displayGroup)) {
+                    DisplayGroupCallback(&displayGroup);
                 }
             }
             else if (ctlHdr->type == packetTypes[IDX_DS5_HAPTICS_PCM]) {

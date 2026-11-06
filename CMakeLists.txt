@@ -303,6 +303,15 @@ if (BUILD_TESTING)
   endif()
   add_test(NAME ds5-haptics-state-golden-tests COMMAND ds5-haptics-state-golden-tests)
 
+  add_executable(display-group-golden-tests tests/DisplayGroupStreamGoldenTest.c)
+  target_include_directories(display-group-golden-tests PRIVATE src)
+  if (MSVC)
+    target_compile_options(display-group-golden-tests PRIVATE /W3 /WX /UNDEBUG)
+  else()
+    target_compile_options(display-group-golden-tests PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+  endif()
+  add_test(NAME display-group-golden-tests COMMAND display-group-golden-tests)
+
   add_executable(ds5-haptics-ir-protocol-golden-tests
     tests/Ds5HapticsIrStreamGoldenTest.c
     src/Ds5HapticsIrStream.c

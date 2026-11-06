@@ -757,6 +757,46 @@ typedef void(*ConnListenerDs5HapticsState)(uint16_t controllerNumber, const uint
 // function is not thread-safe. Pass NULL to unregister before the next connection.
 void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback);
 
+// Display group layout (control opcode 0x55F0, v1). A host that streams several
+// of its displays as one group of ordinary sessions sends this after PLAY to
+// every session of the group, and again whenever a head's admission changes.
+// The latest message replaces the previous one.
+#define LI_DISPLAY_GROUP_MAX_HEADS 8
+#define LI_DISPLAY_HEAD_PENDING 0   // Not joined yet
+#define LI_DISPLAY_HEAD_STREAMING 1
+#define LI_DISPLAY_HEAD_REFUSED 2
+#define LI_DISPLAY_HEAD_ENDED 3
+#define LI_DISPLAY_HEAD_REASON_NONE 0
+#define LI_DISPLAY_HEAD_REASON_ADMISSION_BUDGET 1
+#define LI_DISPLAY_HEAD_REASON_MODE_CHANGE_REFUSED 2
+#define LI_DISPLAY_HEAD_REASON_HEAD_LOST 3
+#define LI_DISPLAY_HEAD_REASON_OTHER 0xFFFF
+typedef struct _DISPLAY_GROUP_HEAD {
+    uint8_t index;     // 0 is the leader's head
+    uint8_t admission; // LI_DISPLAY_HEAD_*
+    uint16_t reason;   // LI_DISPLAY_HEAD_REASON_*
+    int32_t desktopX;  // Host desktop pixels relative to the host primary origin
+    int32_t desktopY;
+    uint32_t width;
+    uint32_t height;
+    uint32_t refreshMilliHz;
+} DISPLAY_GROUP_HEAD, *PDISPLAY_GROUP_HEAD;
+typedef struct _DISPLAY_GROUP_INFO {
+    uint8_t version;
+    uint8_t headCount;
+    uint8_t thisHead; // The head this session streams
+    uint8_t groupId[16];
+    DISPLAY_GROUP_HEAD heads[LI_DISPLAY_GROUP_MAX_HEADS];
+} DISPLAY_GROUP_INFO, *PDISPLAY_GROUP_INFO;
+
+// Called synchronously on the control receive thread with a validated layout.
+// The pointer is valid only during the callback; copy it before deferring work.
+typedef void(*ConnListenerDisplayGroup)(const DISPLAY_GROUP_INFO* info);
+
+// Register before LiStartConnection(), while no connection is running. This
+// function is not thread-safe. Pass NULL to unregister before the next connection.
+void LiSetDisplayGroupCallback(ConnListenerDisplayGroup callback);
+
 // Enable explicit host-restart termination handling for the next connection.
 // Call before LiStartConnection(); the option defaults to false and is consumed
 // by one connection attempt. This function is not thread-safe.
@@ -1430,6 +1470,7 @@ void LiRequestIdrFrame(void);
 #define LI_FF_DYNAMIC_SDR_WHITE      0x100 // Host accepts runtime client SDR reference white updates
 #define LI_FF_CLIENT_RESOLUTION_CHANGE 0x400 // LiSendResolutionChangeRequest() supported
 #define LI_FF_HOST_RESTART 0x8000            // Fork-reserved: opted-in Core restart
+#define LI_FF_DISPLAY_GROUP 0x4000           // Fork-reserved: session joined a display group (diagnostic)
 #define LI_HOST_RESTART_PROTOCOL_VERSION 1
 // Client ANNOUNCE feature bit; this is a separate namespace from LI_FF_*.
 #define ML_FF_HOST_RESTART 0x8000 // Fork-reserved: restart opt-in

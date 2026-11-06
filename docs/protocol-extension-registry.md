@@ -74,6 +74,7 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `LI_FF_HOST_RESTART` | `0x8000` | Advertises support for the versioned host-restart termination protocol. |
+| `LI_FF_DISPLAY_GROUP` | `0x4000` | Diagnostic echo: this session belongs to a display group (one session per host display head). Never an activation condition; groups are negotiated on `/serverinfo`, `/launch` and `/resume`. |
 
 ## Assigned control opcodes
 
@@ -104,6 +105,10 @@ The range `0x55F0`–`0x55FF` is reserved for future fork-private control or
 protocol opcodes. Reserve one value per opcode and document its payload,
 direction, version, and lifecycle in the common-c headers and this registry.
 These values must not be used for feature flags.
+
+| Opcode | Direction | Used for |
+| --- | --- | --- |
+| `0x55F0` | Host to client | Display group layout v1 (`src/DisplayGroupStream.h`). Sent after PLAY to every session of a display group and again when a head's admission changes; the latest message wins. Little-endian: `u8 version=1, u8 headCount (1..8), u8 thisHead, u8 reserved=0, u8 groupId[16]`, then per head `u8 index (= position), u8 admission (0 pending, 1 streaming, 2 refused, 3 ended), u16 reason (0 none, 1 admission budget, 2 mode change refused, 3 head lost, 0xFFFF other), i32 desktopX, i32 desktopY, u32 width, u32 height, u32 refreshMilliHz`. Length is exactly `20 + 24 * headCount`; anything else is ignored. Only sent to sessions that negotiated a group on `/launch displayHeads` or `/resume displayGroup`. |
 
 ## Compatibility contract
 
