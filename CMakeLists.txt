@@ -39,6 +39,9 @@ if (BUILD_SHARED_LIBS_OVERRIDE)
 endif()
 
 target_link_libraries(moonlight-common-c PRIVATE enet)
+if(UNIX AND NOT APPLE)
+  target_link_libraries(moonlight-common-c PUBLIC m)
+endif()
 
 if(MSVC)
   target_compile_options(moonlight-common-c PRIVATE /W3 /wd4100 /wd4232 /wd5105 /WX /std:c11 /experimental:c11atomics)
