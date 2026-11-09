@@ -1307,6 +1307,38 @@ typedef struct _VIDEO_LOCAL_DISCARD_STATS {
 #define LI_HAS_VIDEO_LOCAL_DISCARD_STATS 1
 void LiGetVideoLocalDiscardStats(PVIDEO_LOCAL_DISCARD_STATS stats);
 
+// Video frames the host encoded but never sent, such as frames its send queue
+// dropped because a newer frame superseded them. They leave a frame-number gap
+// that neither the network nor the client caused. A gap is recorded here only
+// when its proof is complete: the first FEC block of the frame after it starts
+// at exactly the stream packet index where the final FEC block of the frame
+// before it ended, so no packet was sent for any frame inside it. Gaps where
+// that can't be shown (boundary packets lost, packets for some of the frames
+// sent and lost, servers that number packets differently) are not recorded and
+// stay network loss. Each gap is one range; the newest
+// VIDEO_HOST_SKIP_RANGE_COUNT ranges are kept, indexed like the local discard
+// ranges above. Ranges are recorded in frame order when the first packet of
+// the frame after the gap arrives, before that frame can reach the decoder.
+// Everything is reset when the video stream is initialized.
+// LiGetVideoHostSkipStats() may be called from any thread and returns one
+// consistent snapshot.
+#define VIDEO_HOST_SKIP_RANGE_COUNT 32
+
+typedef struct _VIDEO_HOST_SKIP_RANGE {
+    uint32_t firstFrameNumber; // lowest skipped frame number
+    uint32_t lastFrameNumber;  // highest skipped frame number
+    uint32_t frames;           // frames in the range
+} VIDEO_HOST_SKIP_RANGE, *PVIDEO_HOST_SKIP_RANGE;
+
+typedef struct _VIDEO_HOST_SKIP_STATS {
+    uint64_t framesSkipped;  // cumulative frames the host never sent
+    uint64_t rangesRecorded; // cumulative ranges
+    VIDEO_HOST_SKIP_RANGE ranges[VIDEO_HOST_SKIP_RANGE_COUNT];
+} VIDEO_HOST_SKIP_STATS, *PVIDEO_HOST_SKIP_STATS;
+
+#define LI_HAS_VIDEO_HOST_SKIP_STATS 1
+void LiGetVideoHostSkipStats(PVIDEO_HOST_SKIP_STATS stats);
+
 // Returns the percentage of video frames lost by the network during the most
 // recent connection-status sampling interval. Decoder and renderer drops are
 // not included. The value is updated every 3 seconds after the stream settles.

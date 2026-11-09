@@ -1,6 +1,7 @@
 #include "Limelight-internal.h"
 
 #include <rs.h>
+#include <stdatomic.h>
 
 #if defined(LC_DEBUG) && !defined(LC_FUZZING)
 // This enables FEC validation mode with a synthetic drop
@@ -17,12 +18,37 @@
 // RTP packets use a 90 KHz presentation timestamp clock
 #define PTS_DIVISOR 90
 
+// Frames the host never sent (see LiGetVideoHostSkipStats). Written by the
+// receive thread and read by the decoders, so guarded by a spinlock that is
+// only ever held to copy this small struct.
+static _Atomic int hostSkipLock;
+static VIDEO_HOST_SKIP_STATS hostSkips;
+
+static void lockHostSkips(void) {
+    while (atomic_exchange_explicit(&hostSkipLock, 1, memory_order_acquire) != 0) {
+    }
+}
+
+static void unlockHostSkips(void) {
+    atomic_store_explicit(&hostSkipLock, 0, memory_order_release);
+}
+
+void LiGetVideoHostSkipStats(PVIDEO_HOST_SKIP_STATS stats) {
+    lockHostSkips();
+    *stats = hostSkips;
+    unlockHostSkips();
+}
+
 void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
     reed_solomon_init();
     memset(queue, 0, sizeof(*queue));
 
     queue->currentFrameNumber = 1;
     queue->multiFecCapable = APP_VERSION_AT_LEAST(7, 1, 431);
+
+    lockHostSkips();
+    memset(&hostSkips, 0, sizeof(hostSkips));
+    unlockHostSkips();
 }
 
 static void purgeListEntries(PRTPV_QUEUE_LIST list) {
@@ -558,6 +584,86 @@ uint32_t RtpvGetCurrentFrameNumber(PRTP_VIDEO_QUEUE queue) {
     return queue->currentFrameNumber;
 }
 
+static void recordHostSkip(PRTP_VIDEO_QUEUE queue, uint32_t firstFrame, uint32_t lastFrame) {
+    uint32_t frames = lastFrame - firstFrame + 1;
+    uint64_t totalFrames;
+
+    lockHostSkips();
+    hostSkips.framesSkipped += frames;
+    PVIDEO_HOST_SKIP_RANGE range = &hostSkips.ranges[hostSkips.rangesRecorded % VIDEO_HOST_SKIP_RANGE_COUNT];
+    range->firstFrameNumber = firstFrame;
+    range->lastFrameNumber = lastFrame;
+    range->frames = frames;
+    hostSkips.rangesRecorded++;
+    totalFrames = hostSkips.framesSkipped;
+    unlockHostSkips();
+
+    connectionHostSkippedFrames(lastFrame);
+
+    // A stalled host can skip a run of frames many times a second
+    uint64_t now = PltGetMicroseconds();
+    if (queue->hostSkipLastLogUs == 0 || now - queue->hostSkipLastLogUs >= 1000000) {
+        queue->hostSkipLastLogUs = now;
+        Limelog("Host never sent frames %u-%u (%llu host-skipped frames total)\n",
+                firstFrame, lastFrame, (unsigned long long)totalFrames);
+    }
+}
+
+// Sunshine gives every data and parity shard it sends the next RTP sequence
+// number and the same 24-bit stream packet index, and frames it drops before
+// packetization (superseded in its send queue) take neither. So a frame-number
+// gap whose next frame starts at exactly the packet index where the frame
+// before it ended had no packet sent for any frame inside it. Only data shards
+// are used: a parity shard's stream packet index is Reed-Solomon output. The
+// 24-bit index rather than the 16-bit sequence number is compared so that a
+// long real outage can't alias a contiguous one.
+static void trackHostSkippedFrames(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, PNV_VIDEO_PACKET nvPacket) {
+    uint32_t dataShards = (nvPacket->fecInfo & 0xFFC00000) >> 22;
+    uint32_t fecIndex = (nvPacket->fecInfo & 0x3FF000) >> 12;
+    uint32_t fecPercentage = (nvPacket->fecInfo & 0xFF0) >> 4;
+    uint32_t packetIndex = U24(nvPacket->streamPacketIndex >> 8);
+    uint8_t blockNumber = (nvPacket->multiFecBlocks >> 4) & 0x3;
+    uint8_t lastBlockNumber = (nvPacket->multiFecBlocks >> 6) & 0x3;
+    uint32_t frame = nvPacket->frameIndex;
+
+    // Servers that don't number data shards this way are never classified
+    if (fecIndex >= dataShards || U16(packetIndex) != packet->sequenceNumber) {
+        return;
+    }
+
+    uint32_t blockStart = U24(packetIndex - fecIndex);
+
+    if (blockNumber == 0 &&
+            (!queue->hostSkipCheckedValid || isBefore32(queue->hostSkipCheckedFrame, frame))) {
+        queue->hostSkipCheckedValid = true;
+        queue->hostSkipCheckedFrame = frame;
+
+        for (int i = 0; i < 2; i++) {
+            if (queue->hostSkipFrameEnds[i].valid &&
+                    isBefore32(queue->hostSkipFrameEnds[i].frameNumber, frame)) {
+                uint32_t previousFrame = queue->hostSkipFrameEnds[i].frameNumber;
+                if (U32(frame - previousFrame) > 1 &&
+                        queue->hostSkipFrameEnds[i].nextPacketIndex == blockStart) {
+                    recordHostSkip(queue, previousFrame + 1, frame - 1);
+                }
+                break;
+            }
+        }
+    }
+
+    if (blockNumber == lastBlockNumber) {
+        uint32_t parityShards = (dataShards * fecPercentage + 99) / 100;
+        uint32_t nextPacketIndex = U24(blockStart + dataShards + parityShards);
+
+        if (!queue->hostSkipFrameEnds[0].valid || isBefore32(queue->hostSkipFrameEnds[0].frameNumber, frame)) {
+            queue->hostSkipFrameEnds[1] = queue->hostSkipFrameEnds[0];
+            queue->hostSkipFrameEnds[0].frameNumber = frame;
+            queue->hostSkipFrameEnds[0].nextPacketIndex = nextPacketIndex;
+            queue->hostSkipFrameEnds[0].valid = true;
+        }
+    }
+}
+
 int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry) {
     /* PyroWave reorders and recovers its inner blocks itself.  The legacy
        contiguous-sequence window is not advanced on this direct path, so
@@ -602,6 +708,9 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         return RTPF_RET_REJECTED;
     }
 #endif
+
+    // Before connectionSawFrame() below counts this frame's gap
+    trackHostSkippedFrames(queue, packet, nvPacket);
 
     /* PyroWave owns its own block-aware FEC and frame reassembly. Do not hold
        these packets behind the legacy RTP frame/FEC queue: doing so would
