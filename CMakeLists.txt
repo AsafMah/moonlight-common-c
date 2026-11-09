@@ -226,6 +226,15 @@ if (BUILD_TESTING)
       $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
     target_link_libraries(video-local-discard-tests PRIVATE moonlight-common-c)
     add_test(NAME video-local-discard-tests COMMAND video-local-discard-tests)
+    add_executable(video-host-skip-tests tests/VideoHostSkipTest.c)
+    target_include_directories(video-host-skip-tests PRIVATE
+      enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(video-host-skip-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_DEFINITIONS>)
+    target_compile_options(video-host-skip-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
+    target_link_libraries(video-host-skip-tests PRIVATE moonlight-common-c)
+    add_test(NAME video-host-skip-tests COMMAND video-host-skip-tests)
     # Includes ControlStream.c to race a sender against stopControlStream().
     add_executable(control-stream-teardown-tests tests/ControlStreamTeardownTest.c)
     target_include_directories(control-stream-teardown-tests PRIVATE

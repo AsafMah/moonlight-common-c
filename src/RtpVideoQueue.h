@@ -48,6 +48,19 @@ typedef struct _RTP_VIDEO_QUEUE {
     uint64_t lastOosFramePresentationTimestamp;
     bool receivedOosData;
 
+    // Host-skipped frame detection (see LiGetVideoHostSkipStats). The two newest
+    // frames whose final FEC block was seen, with the 24-bit stream packet index
+    // just past that block; two so a reordered final block of the current frame
+    // doesn't hide the end of the frame before it.
+    struct {
+        uint32_t frameNumber;
+        uint32_t nextPacketIndex;
+        bool valid;
+    } hostSkipFrameEnds[2];
+    uint32_t hostSkipCheckedFrame; // newest frame whose start was checked
+    bool hostSkipCheckedValid;
+    uint64_t hostSkipLastLogUs;
+
     RTP_VIDEO_STATS stats; // the above values are short-lived, this tracks stats for the life of the queue
 } RTP_VIDEO_QUEUE, *PRTP_VIDEO_QUEUE;
 

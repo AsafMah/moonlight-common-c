@@ -809,6 +809,14 @@ void connectionSawFrame(uint32_t frameIndex) {
     lastSeenFrame = frameIndex;
 }
 
+// The host never sent the frames up to lastSkippedFrame, so the next
+// connectionSawFrame() must not count them as lost.
+void connectionHostSkippedFrames(uint32_t lastSkippedFrame) {
+    if (lastSeenFrame != 0 && isBefore32(lastSeenFrame, lastSkippedFrame)) {
+        lastSeenFrame = lastSkippedFrame;
+    }
+}
+
 double LiGetEstimatedVideoFrameLossPercentage(void) {
     return atomic_load_explicit(&lastIntervalLossBasisPoints, memory_order_relaxed) / 100.0;
 }
