@@ -119,7 +119,7 @@ extern uint32_t EncryptionFeaturesEnabled;
 #define ML_FF_HOST_SESSION_STATE 0x100 // Client accepts host session lock state updates (0x550E)
 extern ConnListenerDs5HapticsState Ds5HapticsStateCallback;
 extern ConnListenerHostSessionState HostSessionStateCallback;
-#define ML_FF_ENDPOINT_AUTO_REFRESH 0x40 // Client requests authenticated endpoint migration v1
+#define ML_FF_ENDPOINT_AUTO_REFRESH 0x8000 // Client requests authenticated endpoint migration v1
 extern bool EndpointRefreshRequested;
 void LiSetEndpointAutoRefreshEnabled(bool enabled);
 

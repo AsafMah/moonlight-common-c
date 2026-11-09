@@ -14,7 +14,7 @@ typedef struct _LI_ENDPOINT_REFRESH {
     uint8_t stream;
     int qos;
     int bufferSize;
-    unsigned char session[16], key[32], nonce[16];
+    unsigned char session[LI_ER_SESSION_SIZE], key[LI_ER_KEY_SIZE], nonce[LI_ER_NONCE_SIZE];
     uint64_t sequence, ackSequence, challengeSequence, candidateFirstSequence;
     uint64_t lastAck, lastMedia, candidateStarted, lastPoll, stableSince, receiveTime;
     uint64_t lastProbeAt, activeResponseAt, candidateResponseAt;
@@ -26,7 +26,7 @@ typedef struct _LI_ENDPOINT_REFRESH {
 } LI_ENDPOINT_REFRESH;
 
 bool LiErClientInitialize(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint8_t stream,
-                          const char session[16], uint16_t remotePort, int qos, int bufferSize);
+                          const char session[LI_ER_SESSION_SIZE], uint16_t remotePort, int qos, int bufferSize);
 void LiErClientDestroy(LI_ENDPOINT_REFRESH* state);
 bool LiErClientPing(LI_ENDPOINT_REFRESH* state);
 // Distinguish handled protocol traffic from a real receive timeout/socket error.

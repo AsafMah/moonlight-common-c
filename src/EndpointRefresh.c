@@ -14,7 +14,7 @@ void LiSetEndpointAutoRefreshEnabled(bool value) {
 }
 
 bool LiErClientInitialize(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint8_t stream,
-                          const char session[16], uint16_t remotePort, int qos, int bufferSize) {
+                          const char session[LI_ER_SESSION_SIZE], uint16_t remotePort, int qos, int bufferSize) {
     memset(state, 0, sizeof(*state));
     if (!EndpointRefreshRequested) return true;
     if (PltCreateMutex(&state->mutex)) return false;
@@ -25,7 +25,7 @@ bool LiErClientInitialize(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint8_t str
     state->stream = stream;
     state->qos = qos;
     state->bufferSize = bufferSize;
-    memcpy(state->session, session, 16);
+    memcpy(state->session, session, LI_ER_SESSION_SIZE);
     if (!LiErDeriveKey((const unsigned char*)StreamConfig.remoteInputAesKey, state->session, state->key)) {
         PltDeleteMutex(&state->mutex);
         return false;
