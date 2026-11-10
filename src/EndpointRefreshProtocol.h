@@ -8,6 +8,24 @@
 extern "C" {
 #endif
 
+/*
+ * Endpoint refresh is a private Sunshine/Moonlight extension. It is not an
+ * IETF wire protocol; it uses standard HMAC-SHA-256 primitives with a fixed
+ * packet layout:
+ *
+ *   0..3   "EAPR" magic
+ *   4      protocol version
+ *   5      message type
+ *   6      media stream
+ *   7      reserved, must be zero
+ *   8..23  RTSP session identifier
+ *   24..31 big-endian sequence number
+ *   32..47 challenge nonce
+ *   48..63 first 128 bits of HMAC-SHA-256 over bytes 0..47
+ *
+ * The HMAC key is derived per RTSP session from the existing RI key. A new
+ * UDP endpoint is accepted only after an authenticated challenge/response.
+ */
 #define LI_ER_VERSION 1
 #define LI_ER_PACKET_SIZE 64
 #define LI_ER_RI_KEY_SIZE 16
@@ -38,6 +56,10 @@ bool LiErEncode(unsigned char packet[LI_ER_PACKET_SIZE], uint8_t type, uint8_t s
 bool LiErDecode(const void* packet, size_t length, uint8_t stream,
                 const unsigned char session[LI_ER_SESSION_SIZE], const unsigned char key[LI_ER_KEY_SIZE],
                 LI_ER_MESSAGE* message);
+/*
+ * Wipe caller-owned sensitive storage. Current callers pass sizeof() of a
+ * local or state object; length is never taken from a received packet.
+ */
 void LiErWipe(void* data, size_t length);
 
 #ifdef __cplusplus

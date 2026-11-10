@@ -2,16 +2,30 @@
 #include "EndpointRefresh.h"
 #include <stdatomic.h>
 
-// Endpoint refresh timing and retry policy. These values are local state-machine
-// limits and are not part of the wire protocol.
+// Endpoint refresh timing and retry policy. These values are local
+// state-machine limits, are not received from the network, and are not part of
+// the wire protocol.
 enum {
+    // Match the existing 500 ms media keepalive cadence while bounding
+    // repeated calls from a fast ping worker.
     ENDPOINT_REFRESH_PROBE_INTERVAL_MS = 500,
+    // Permit at most four challenge responses per second per socket.
     ENDPOINT_REFRESH_RESPONSE_INTERVAL_MS = 250,
+    // Require two seconds without authenticated ACKs and accepted media before
+    // allocating a replacement socket.
     ENDPOINT_REFRESH_RECOVERY_TIMEOUT_MS = 2000,
+    // After 30 seconds of healthy traffic, allow the bounded retry budget to
+    // be used again for a later independent network event.
     ENDPOINT_REFRESH_STABLE_WINDOW_MS = 30000,
+    // Three two-second recovery windows must fail before the session is
+    // reported as unrecoverable.
     ENDPOINT_REFRESH_FAILURE_TIMEOUT_MS = 8000,
+    // Run maintenance at 10 Hz so timeout checks do not run for every packet.
     ENDPOINT_REFRESH_MAINTENANCE_INTERVAL_MS = 100,
+    // Accept a small amount of authenticated reordering while rejecting stale
+    // challenges and acknowledgements.
     ENDPOINT_REFRESH_SEQUENCE_WINDOW = 8,
+    // Bound replacement socket creation and prevent an endless recovery loop.
     ENDPOINT_REFRESH_MAX_ATTEMPTS = 3
 };
 

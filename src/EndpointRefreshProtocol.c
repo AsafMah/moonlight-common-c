@@ -1,8 +1,10 @@
 #include "EndpointRefreshProtocol.h"
 #include <string.h>
 #ifdef USE_MBEDTLS
+// The generic message-digest API provides SHA-256 HMAC for Mbed TLS builds.
 #include <mbedtls/md.h>
 #else
+// OpenSSL provides the equivalent HMAC-SHA-256 implementation here.
 #include <openssl/hmac.h>
 #endif
 
@@ -18,6 +20,11 @@ static bool hmacSha256(const unsigned char* key, size_t keyLength,
 }
 
 void LiErWipe(void* data, size_t length) {
+    if (data == NULL || length == 0) {
+        return;
+    }
+    // Volatile writes prevent the compiler from removing this best-effort
+    // scrub. The caller still must pass a valid buffer and its true size.
     volatile unsigned char* bytes = data;
     while (length--) {
         *bytes++ = 0;
@@ -35,6 +42,9 @@ static bool equal(const unsigned char* a, const unsigned char* b, size_t length)
 bool LiErDeriveKey(const unsigned char riKey[LI_ER_RI_KEY_SIZE],
                    const unsigned char session[LI_ER_SESSION_SIZE],
                    unsigned char key[LI_ER_KEY_SIZE]) {
+    // Domain separation prevents this extension from reusing an HMAC output
+    // as a key for another protocol purpose. This is a fixed HMAC-based KDF
+    // for compatibility, rather than a general-purpose HKDF interface.
     static const unsigned char domain[] = "sunshine/endpoint_auto_refresh/v1";
     unsigned char context[sizeof(domain) - 1 + LI_ER_SESSION_SIZE];
     memcpy(context, domain, sizeof(domain) - 1);
