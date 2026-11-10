@@ -342,11 +342,11 @@ static void AudioReceiveThreadProc(void* context) {
         if (packet->header.size == LI_ER_RECV_HANDLED) {
             continue;
         }
-        if (packet->header.size == LI_ER_RECV_FAILED) {
+        else if (packet->header.size == LI_ER_RECV_FAILED) {
             ListenerCallbacks.connectionTerminated(ML_ERROR_ENDPOINT_REFRESH_FAILED);
             break;
         }
-        if (packet->header.size < 0) {
+        else if (packet->header.size < 0) {
             Limelog("Audio Receive: recvUdpSocket() failed: %d\n", (int)LastSocketError());
             ListenerCallbacks.connectionTerminated(LastSocketFail());
             break;
