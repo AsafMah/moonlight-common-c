@@ -92,7 +92,9 @@ static void handle(LI_ENDPOINT_REFRESH* state, SOCKET socket, const void* packet
     LI_ER_MESSAGE message;
     unsigned char response[LI_ER_PACKET_SIZE];
     if (!LiErDecode(packet, size, state->stream, state->session, state->key, &message) ||
-        message.sequence > state->sequence || state->sequence - message.sequence > 8) return;
+        message.sequence > state->sequence || state->sequence - message.sequence > 8) {
+        return;
+    }
     if (message.type == LI_ER_CHALLENGE &&
         (message.sequence > state->ackSequence ||
          (socket == state->candidate && message.sequence >= state->candidateFirstSequence))) {
@@ -115,7 +117,9 @@ static void handle(LI_ENDPOINT_REFRESH* state, SOCKET socket, const void* packet
              (message.sequence > state->ackSequence || socket == state->candidate)) {
         if (socket == state->candidate && (!state->challenged ||
                 memcmp(state->nonce, message.nonce, sizeof(state->nonce)) ||
-                message.sequence < state->challengeSequence)) return;
+                message.sequence < state->challengeSequence)) {
+            return;
+        }
         if (message.sequence > state->ackSequence) {
             state->ackSequence = message.sequence;
         }
@@ -150,7 +154,9 @@ static bool maintain(LI_ENDPOINT_REFRESH* state, uint64_t now) {
             state->attempts = 0;
         }
     }
-    else state->stableSince = 0;
+    else {
+        state->stableSince = 0;
+    }
     if (state->candidate != INVALID_SOCKET) {
         if (now - state->candidateStarted >= 2000) {
             closeSocket(state->candidate);
@@ -221,7 +227,9 @@ int LiErClientRecv(LI_ENDPOINT_REFRESH* state, SOCKET* socket, char* packet, int
             else if (oldReady) {
                 state->candidateNext = true;
             }
-            else length = 0;
+            else {
+                length = 0;
+            }
             if (length > 0) {
                 length = recvUdpSocket(selected, packet, size, selected == state->active && useSelect);
             }

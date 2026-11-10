@@ -24,7 +24,9 @@ void LiErWipe(void* data, size_t length) {
 
 static bool equal(const unsigned char* a, const unsigned char* b, size_t length) {
     unsigned char difference = 0;
-    while (length--) difference |= *a++ ^ *b++;
+    while (length--) {
+        difference |= *a++ ^ *b++;
+    }
     return difference == 0;
 }
 
@@ -43,16 +45,24 @@ bool LiErEncode(unsigned char packet[LI_ER_PACKET_SIZE], uint8_t type, uint8_t s
                 uint64_t sequence, const unsigned char nonce[LI_ER_NONCE_SIZE]) {
     unsigned char tag[LI_ER_KEY_SIZE];
     unsigned int i;
-    if (!sequence || type < LI_ER_PROBE || type > LI_ER_ACK || stream < LI_ER_VIDEO || stream > LI_ER_AUDIO) return false;
+    if (!sequence || type < LI_ER_PROBE || type > LI_ER_ACK || stream < LI_ER_VIDEO || stream > LI_ER_AUDIO) {
+        return false;
+    }
     memset(packet, 0, LI_ER_PACKET_SIZE);
     memcpy(packet, "EAPR", 4);
     packet[4] = LI_ER_VERSION;
     packet[5] = type;
     packet[6] = stream;
     memcpy(packet + 8, session, LI_ER_SESSION_SIZE);
-    for (i = 0; i < 8; i++) packet[31 - i] = (unsigned char)(sequence >> (i * 8));
-    if (nonce) memcpy(packet + 32, nonce, LI_ER_NONCE_SIZE);
-    if (!hmacSha256(key, LI_ER_KEY_SIZE, packet, LI_ER_AUTHENTICATED_SIZE, tag)) return false;
+    for (i = 0; i < 8; i++) {
+        packet[31 - i] = (unsigned char)(sequence >> (i * 8));
+    }
+    if (nonce) {
+        memcpy(packet + 32, nonce, LI_ER_NONCE_SIZE);
+    }
+    if (!hmacSha256(key, LI_ER_KEY_SIZE, packet, LI_ER_AUTHENTICATED_SIZE, tag)) {
+        return false;
+    }
     memcpy(packet + LI_ER_AUTHENTICATED_SIZE, tag, LI_ER_AUTH_TAG_SIZE);
     LiErWipe(tag, sizeof(tag));
     return true;
@@ -68,13 +78,23 @@ bool LiErDecode(const void* data, size_t length, uint8_t stream,
     bool valid;
     if (length != LI_ER_PACKET_SIZE || memcmp(packet, "EAPR", 4) || packet[4] != LI_ER_VERSION ||
         packet[7] || packet[6] != stream || packet[5] < LI_ER_PROBE || packet[5] > LI_ER_ACK ||
-        !equal(packet + 8, session, LI_ER_SESSION_SIZE)) return false;
-    if (!hmacSha256(key, LI_ER_KEY_SIZE, packet, LI_ER_AUTHENTICATED_SIZE, tag)) return false;
+        !equal(packet + 8, session, LI_ER_SESSION_SIZE)) {
+        return false;
+    }
+    if (!hmacSha256(key, LI_ER_KEY_SIZE, packet, LI_ER_AUTHENTICATED_SIZE, tag)) {
+        return false;
+    }
     valid = equal(tag, packet + LI_ER_AUTHENTICATED_SIZE, LI_ER_AUTH_TAG_SIZE);
     LiErWipe(tag, sizeof(tag));
-    if (!valid) return false;
-    for (i = 24; i < 32; i++) sequence = (sequence << 8) | packet[i];
-    if (!sequence) return false;
+    if (!valid) {
+        return false;
+    }
+    for (i = 24; i < 32; i++) {
+        sequence = (sequence << 8) | packet[i];
+    }
+    if (!sequence) {
+        return false;
+    }
     message->type = packet[5];
     message->sequence = sequence;
     memcpy(message->nonce, packet + 32, LI_ER_NONCE_SIZE);
