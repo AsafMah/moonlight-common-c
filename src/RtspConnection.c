@@ -1436,7 +1436,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
             SunshineFeatureFlags = 0;
         }
         {
-            unsigned int refreshVersion = 0;
+            uint32_t refreshVersion = 0;
             EndpointRefreshRequested = encryptedRtspEnabled &&
                 (SunshineFeatureFlags & LI_FF_ENDPOINT_AUTO_REFRESH) &&
                 parseSdpAttributeToUInt(response.payload, "x-ss-general.endpointAutoRefreshVersion", &refreshVersion) && refreshVersion == 1;
