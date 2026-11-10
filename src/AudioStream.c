@@ -339,7 +339,9 @@ static void AudioReceiveThreadProc(void* context) {
         }
 
         packet->header.size = LiErClientRecv(&endpointRefresh, &rtpSocket, &packet->data[0], MAX_PACKET_SIZE, useSelect);
-        if (packet->header.size == LI_ER_RECV_HANDLED) continue;
+        if (packet->header.size == LI_ER_RECV_HANDLED) {
+            continue;
+        }
         if (packet->header.size == LI_ER_RECV_FAILED) {
             ListenerCallbacks.connectionTerminated(ML_ERROR_ENDPOINT_REFRESH_FAILED);
             break;
@@ -398,7 +400,9 @@ static void AudioReceiveThreadProc(void* context) {
         rtp->ssrc = BE32(rtp->ssrc);
 
         queueStatus = RtpaAddPacket(&rtpAudioQueue, (PRTP_PACKET)&packet->data[0], (uint16_t)packet->header.size);
-        if (queueStatus != 0) LiErClientMedia(&endpointRefresh);
+        if (queueStatus != 0) {
+            LiErClientMedia(&endpointRefresh);
+        }
         if (RTPQ_HANDLE_NOW(queueStatus)) {
             if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
                 if (!queuePacketToLbq(&packet)) {

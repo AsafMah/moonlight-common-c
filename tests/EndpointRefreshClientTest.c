@@ -54,8 +54,13 @@ void closeSocket(SOCKET s) {
 SOCKET bindUdpSocket(int family, struct sockaddr_storage* local, SOCKADDR_LEN length, int bufferSize, int qos) {
     (void)bufferSize; (void)qos;
     SOCKET s = socket(family, SOCK_DGRAM, IPPROTO_UDP);
-    if (s == INVALID_SOCKET) return s;
-    if (bind(s, (struct sockaddr*)local, length)) { closeSocket(s); return INVALID_SOCKET; }
+    if (s == INVALID_SOCKET) {
+        return s;
+    }
+    if (bind(s, (struct sockaddr*)local, length)) {
+        closeSocket(s);
+        return INVALID_SOCKET;
+    }
     opened++;
     return s;
 }
@@ -64,7 +69,9 @@ int pollSockets(struct pollfd* fds, int count, int timeout) {
     // Clock advances explicitly in this test. Use real UDP readiness without
     // sleeping through every simulated timeout in the retry-budget checks.
     (void)timeout;
-    if (count == 2) dualSocketPolls++;
+    if (count == 2) {
+        dualSocketPolls++;
+    }
     fd_set reads;
     struct timeval immediate = { 0, 0 };
     SOCKET highest = 0;
@@ -72,11 +79,17 @@ int pollSockets(struct pollfd* fds, int count, int timeout) {
     for (int i = 0; i < count; i++) {
         fds[i].revents = 0;
         FD_SET(fds[i].fd, &reads);
-        if (fds[i].fd > highest) highest = fds[i].fd;
+        if (fds[i].fd > highest) {
+            highest = fds[i].fd;
+        }
     }
     int result = select((int)(highest + 1), &reads, NULL, NULL, &immediate);
     if (result > 0) {
-        for (int i = 0; i < count; i++) if (FD_ISSET(fds[i].fd, &reads)) fds[i].revents = POLLIN;
+        for (int i = 0; i < count; i++) {
+            if (FD_ISSET(fds[i].fd, &reads)) {
+                fds[i].revents = POLLIN;
+            }
+        }
     }
     return result;
 }
@@ -96,7 +109,9 @@ static int readProbe(SOCKET host, struct sockaddr_storage* peer, LI_ENDPOINT_REF
     unsigned char packet[64];
     SOCKADDR_LEN length = sizeof(*peer);
     FD_ZERO(&reads); FD_SET(host, &reads);
-    if (select((int)(host + 1), &reads, NULL, NULL, &timeout) != 1) return 0;
+    if (select((int)(host + 1), &reads, NULL, NULL, &timeout) != 1) {
+        return 0;
+    }
     int bytes = recvfrom(host, (char*)packet, sizeof(packet), 0, (struct sockaddr*)peer, &length);
     return bytes == 64 && LiErDecode(packet, 64, LI_ER_VIDEO, state->session, state->key, message);
 }
@@ -148,7 +163,9 @@ int main(void) {
     LI_ER_MESSAGE message;
     CHECK(readProbe(host, &peer, &state, &message));
     CHECK(message.type == LI_ER_PROBE);
-    for (int i = 0; i < 100; i++) CHECK(LiErClientPing(&state));
+    for (int i = 0; i < 100; i++) {
+        CHECK(LiErClientPing(&state));
+    }
     CHECK(state.sequence == 1 && hostEmpty(host)); // Repeated callers cannot flood probes.
     CHECK(LiErEncode(packet, LI_ER_CHALLENGE, LI_ER_VIDEO, state.session, state.key, message.sequence, nonce));
     CHECK(sendPacket(host, &originalPeer, packet, sizeof(packet)) == 64);
@@ -277,9 +294,14 @@ int main(void) {
         result = LiErClientRecv(&state, &active, (char*)buffer, sizeof(buffer), false);
     }
     CHECK(result == LI_ER_RECV_FAILED && state.attempts == 3 && state.candidate == INVALID_SOCKET);
-    while (!hostEmpty(host)) CHECK(readProbe(host, &peer, &state, &message));
+    while (!hostEmpty(host)) {
+        CHECK(readProbe(host, &peer, &state, &message));
+    }
     uint64_t terminalSequence = state.sequence;
-    for (int i = 0; i < 100; i++) { now += 500; CHECK(LiErClientPing(&state)); }
+    for (int i = 0; i < 100; i++) {
+        now += 500;
+        CHECK(LiErClientPing(&state));
+    }
     CHECK(state.sequence == terminalSequence && hostEmpty(host));
     CHECK(LiErClientRecv(&state, &active, (char*)buffer, sizeof(buffer), false) == LI_ER_RECV_FAILED);
     LiErClientDestroy(&state);

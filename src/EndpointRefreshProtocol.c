@@ -19,7 +19,9 @@ static bool hmacSha256(const unsigned char* key, size_t keyLength,
 
 void LiErWipe(void* data, size_t length) {
     volatile unsigned char* bytes = data;
-    while (length--) *bytes++ = 0;
+    while (length--) {
+        *bytes++ = 0;
+    }
 }
 
 static bool equal(const unsigned char* a, const unsigned char* b, size_t length) {

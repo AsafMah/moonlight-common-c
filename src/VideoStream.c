@@ -155,7 +155,9 @@ static void VideoReceiveThreadProc(void* context) {
                             encrypted ? encryptedBuffer : buffer,
                             receiveSize,
                             useSelect);
-        if (err == LI_ER_RECV_HANDLED) continue;
+        if (err == LI_ER_RECV_HANDLED) {
+            continue;
+        }
         if (err == LI_ER_RECV_FAILED) {
             ListenerCallbacks.connectionTerminated(ML_ERROR_ENDPOINT_REFRESH_FAILED);
             break;

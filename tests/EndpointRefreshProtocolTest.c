@@ -35,7 +35,9 @@ int main(void) {
     CHECK(!LiErEncode(packet, 0, LI_ER_VIDEO, id, key, 1, NULL));
     CHECK(!LiErEncode(packet, LI_ER_PROBE, 0, id, key, 1, NULL));
     LiErWipe(key, sizeof(key));
-    for (unsigned int i = 0; i < sizeof(key); i++) CHECK(key[i] == 0);
+    for (unsigned int i = 0; i < sizeof(key); i++) {
+        CHECK(key[i] == 0);
+    }
     puts("Endpoint refresh codec: known vector and rejection checks passed");
     return 0;
 }
