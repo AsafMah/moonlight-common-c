@@ -16,8 +16,12 @@ void LiSetEndpointAutoRefreshEnabled(bool value) {
 bool LiErClientInitialize(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint8_t stream,
                           const char session[LI_ER_SESSION_SIZE], uint16_t remotePort, int qos, int bufferSize) {
     memset(state, 0, sizeof(*state));
-    if (!EndpointRefreshRequested) return true;
-    if (PltCreateMutex(&state->mutex)) return false;
+    if (!EndpointRefreshRequested) {
+        return true;
+    }
+    if (PltCreateMutex(&state->mutex)) {
+        return false;
+    }
     state->active = socket;
     state->candidate = INVALID_SOCKET;
     state->lastProbeSocket = INVALID_SOCKET;
@@ -42,8 +46,12 @@ bool LiErClientInitialize(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint8_t str
 
 void LiErClientDestroy(LI_ENDPOINT_REFRESH* state) {
     // The existing ping and receive workers have both stopped before cleanup.
-    if (!state->initialized) return;
-    if (state->candidate != INVALID_SOCKET) closeSocket(state->candidate);
+    if (!state->initialized) {
+        return;
+    }
+    if (state->candidate != INVALID_SOCKET) {
+        closeSocket(state->candidate);
+    }
     PltDeleteMutex(&state->mutex);
     LiErWipe(state, sizeof(*state));
 }
@@ -52,7 +60,9 @@ void LiErClientDestroy(LI_ENDPOINT_REFRESH* state) {
 // repeated callers cannot turn normal keepalive into an unbounded send loop.
 static void sendProbe(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint64_t now) {
     unsigned char packet[LI_ER_PACKET_SIZE];
-    if (socket == state->lastProbeSocket && now - state->lastProbeAt < 500) return;
+    if (socket == state->lastProbeSocket && now - state->lastProbeAt < 500) {
+        return;
+    }
     if (state->sequence != UINT64_MAX && LiErEncode(packet, LI_ER_PROBE, state->stream,
             state->session, state->key, ++state->sequence, NULL)) {
         state->lastProbeSocket = socket;
@@ -62,12 +72,18 @@ static void sendProbe(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint64_t now) {
 }
 
 bool LiErClientPing(LI_ENDPOINT_REFRESH* state) {
-    if (!state->initialized) return false;
+    if (!state->initialized) {
+        return false;
+    }
     // Audio's ping worker starts during SETUP; wait for authenticated ANNOUNCE.
-    if (!LiIsEndpointAutoRefreshEnabled()) return true;
+    if (!LiIsEndpointAutoRefreshEnabled()) {
+        return true;
+    }
     PltLockMutex(&state->mutex);
     SOCKET socket = state->candidate != INVALID_SOCKET ? state->candidate : state->active;
-    if (!state->failed) sendProbe(state, socket, PltGetMillis());
+    if (!state->failed) {
+        sendProbe(state, socket, PltGetMillis());
+    }
     PltUnlockMutex(&state->mutex);
     return true;
 }
@@ -81,7 +97,9 @@ static void handle(LI_ENDPOINT_REFRESH* state, SOCKET socket, const void* packet
         (message.sequence > state->ackSequence ||
          (socket == state->candidate && message.sequence >= state->candidateFirstSequence))) {
         uint64_t* responseAt = socket == state->candidate ? &state->candidateResponseAt : &state->activeResponseAt;
-        if (*responseAt != UINT64_MAX && now - *responseAt < 250) return;
+        if (*responseAt != UINT64_MAX && now - *responseAt < 250) {
+            return;
+        }
         if (socket == state->candidate) {
             state->challengeSequence = message.sequence;
             memcpy(state->nonce, message.nonce, sizeof(state->nonce));
@@ -98,9 +116,13 @@ static void handle(LI_ENDPOINT_REFRESH* state, SOCKET socket, const void* packet
         if (socket == state->candidate && (!state->challenged ||
                 memcmp(state->nonce, message.nonce, sizeof(state->nonce)) ||
                 message.sequence < state->challengeSequence)) return;
-        if (message.sequence > state->ackSequence) state->ackSequence = message.sequence;
+        if (message.sequence > state->ackSequence) {
+            state->ackSequence = message.sequence;
+        }
         state->lastAck = now;
-        if (socket == state->candidate) state->candidateConfirmed = true;
+        if (socket == state->candidate) {
+            state->candidateConfirmed = true;
+        }
     }
 }
 
@@ -115,12 +137,18 @@ void LiErClientMedia(LI_ENDPOINT_REFRESH* state) {
 static bool maintain(LI_ENDPOINT_REFRESH* state, uint64_t now) {
     // Reuse the previous receive timestamp, after the caller has accepted or
     // rejected its RTP packet. No extra per-packet clock read or worker needed.
-    if (now - state->lastPoll < 100) return true;
+    if (now - state->lastPoll < 100) {
+        return true;
+    }
     state->lastPoll = now;
     PltLockMutex(&state->mutex);
     if (now - state->lastAck < 2000 && now - state->lastMedia < 2000) {
-        if (!state->stableSince) state->stableSince = now;
-        if (now - state->stableSince >= 30000) state->attempts = 0;
+        if (!state->stableSince) {
+            state->stableSince = now;
+        }
+        if (now - state->stableSince >= 30000) {
+            state->attempts = 0;
+        }
     }
     else state->stableSince = 0;
     if (state->candidate != INVALID_SOCKET) {
@@ -164,8 +192,12 @@ int LiErClientRecv(LI_ENDPOINT_REFRESH* state, SOCKET* socket, char* packet, int
     if (!state->initialized || !LiIsEndpointAutoRefreshEnabled()) {
         return recvUdpSocket(*socket, packet, size, useSelect);
     }
-    if (state->failed) return LI_ER_RECV_FAILED;
-    if (state->receiving && !maintain(state, state->receiveTime)) return LI_ER_RECV_FAILED;
+    if (state->failed) {
+        return LI_ER_RECV_FAILED;
+    }
+    if (state->receiving && !maintain(state, state->receiveTime)) {
+        return LI_ER_RECV_FAILED;
+    }
 
     SOCKET selected = state->active;
     int length;
@@ -190,7 +222,9 @@ int LiErClientRecv(LI_ENDPOINT_REFRESH* state, SOCKET* socket, char* packet, int
                 state->candidateNext = true;
             }
             else length = 0;
-            if (length > 0) length = recvUdpSocket(selected, packet, size, selected == state->active && useSelect);
+            if (length > 0) {
+                length = recvUdpSocket(selected, packet, size, selected == state->active && useSelect);
+            }
         }
     }
 

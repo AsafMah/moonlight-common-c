@@ -40,9 +40,15 @@ static bool encryptedRtspEnabled;
 static bool endpointHeaderEqual(const char* a, const char* b) {
     while (*a && *b) {
         unsigned char x = (unsigned char)*a++, y = (unsigned char)*b++;
-        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-        if (x != y) return false;
+        if (x >= 'A' && x <= 'Z') {
+            x += 'a' - 'A';
+        }
+        if (y >= 'A' && y <= 'Z') {
+            y += 'a' - 'A';
+        }
+        if (x != y) {
+            return false;
+        }
     }
     return *a == *b;
 }
@@ -53,7 +59,9 @@ static bool endpointRefreshConfirmed(POPTION_ITEM options) {
     for (; options; options = options->next) {
         if (endpointHeaderEqual(options->option, "X-SS-Endpoint-Auto-Refresh")) {
 #ifdef FLAG_DUPLICATE_OPTION
-            if (options->flags & FLAG_DUPLICATE_OPTION) return false;
+            if (options->flags & FLAG_DUPLICATE_OPTION) {
+                return false;
+            }
 #endif
             value = options->content;
             count++;
