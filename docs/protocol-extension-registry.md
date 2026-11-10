@@ -36,7 +36,9 @@ reused or renumbered.
 New fork-only client flags are allocated from `0x8000` downward. Reserve the
 next unused high bit before implementation and add it to this table.
 
-There are currently no new client-side allocations in this section.
+| Identifier | Value | Used for |
+| --- | ---: | --- |
+| `ML_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Tells the host that the client supports authenticated UDP endpoint migration v1. Activation also requires encrypted RTSP and `x-ml-general.endpointAutoRefreshVersion:1`. |
 
 ## Host feature flags
 
@@ -69,7 +71,9 @@ reused or renumbered.
 New fork-only host flags are allocated from `0x8000` downward. Reserve the
 next unused high bit before implementation and add it to this table.
 
-There are currently no new host-side allocations in this section.
+| Identifier | Value | Used for |
+| --- | ---: | --- |
+| `LI_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Advertises authenticated UDP endpoint migration v1. The host enables it only after the client requests version 1 over encrypted RTSP. |
 
 ## Assigned control opcodes
 

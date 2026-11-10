@@ -1,4 +1,5 @@
 #include "Limelight-internal.h"
+#include <stdatomic.h>
 
 #define TEST_PORT_TIMEOUT_SEC 3
 
@@ -239,19 +240,23 @@ void closeSocket(SOCKET s) {
 #endif
 }
 
-// Registry of live streaming sockets for LiGetStreamSockets(). Each slot is
-// written once by its stream thread before LiStartConnection() returns and
-// cleared by LiStopConnection(), so plain volatile accesses suffice.
-static volatile SOCKET streamSocketRegistry[3];
+// Receivers can replace a media socket while diagnostics or teardown run.
+static _Atomic(SOCKET) streamSocketRegistry[3];
 
 void LiRecordStreamSocket(SOCKET s, int slot) {
     LC_ASSERT(slot >= 0 && slot < (int)(sizeof(streamSocketRegistry) / sizeof(streamSocketRegistry[0])));
-    streamSocketRegistry[slot] = s;
+    atomic_store(&streamSocketRegistry[slot], s);
+}
+
+void LiReplaceStreamSocket(SOCKET previous, SOCKET replacement, int slot) {
+    LC_ASSERT(slot >= 0 && slot < (int)(sizeof(streamSocketRegistry) / sizeof(streamSocketRegistry[0])));
+    // Once teardown clears a slot, a concurrent migration must not republish it.
+    atomic_compare_exchange_strong(&streamSocketRegistry[slot], &previous, replacement);
 }
 
 void LiClearStreamSockets(void) {
     for (int i = 0; i < (int)(sizeof(streamSocketRegistry) / sizeof(streamSocketRegistry[0])); i++) {
-        streamSocketRegistry[i] = INVALID_SOCKET;
+        atomic_store(&streamSocketRegistry[i], INVALID_SOCKET);
     }
 }
 
@@ -263,7 +268,7 @@ void LiGetStreamSockets(LI_STREAM_SOCKETS* sockets) {
     const int slots[] = { STREAM_SOCKET_SLOT_VIDEO, STREAM_SOCKET_SLOT_AUDIO, STREAM_SOCKET_SLOT_CONTROL };
     LI_STREAM_SOCKET* out[] = { &sockets->videoRtp, &sockets->audioRtp, &sockets->control };
     for (int i = 0; i < (int)(sizeof(slots) / sizeof(slots[0])); i++) {
-        SOCKET s = streamSocketRegistry[slots[i]];
+        SOCKET s = atomic_load(&streamSocketRegistry[slots[i]]);
         if (s == INVALID_SOCKET) {
             continue;
         }

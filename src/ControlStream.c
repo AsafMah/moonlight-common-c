@@ -132,6 +132,15 @@ static PLT_EVENT idrFrameRequiredEvent;
 static PPLT_CRYPTO_CONTEXT encryptionCtx;
 static PPLT_CRYPTO_CONTEXT decryptionCtx;
 
+// In control-only mode, endpoint refresh is the only media-side signal that
+// can distinguish a transport timeout from a generic control failure.
+static int controlTransportError(int fallback) {
+    if (StreamConfig.controlOnly && LiIsEndpointAutoRefreshEnabled()) {
+        return ML_ERROR_CONTROL_TRANSPORT_TIMEOUT;
+    }
+    return fallback;
+}
+
 #define CONN_IMMEDIATE_POOR_LOSS_RATE 30
 #define CONN_CONSECUTIVE_POOR_LOSS_RATE 15
 #define CONN_OKAY_LOSS_RATE 5
@@ -173,6 +182,7 @@ static CURSOR_STREAM_STATE cursorReassembly;
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
+#define CONTROL_STREAM_GENERIC_ERROR (-1)
 
 static const short packetTypesGen3[] = {
     0x1407, // Start A (Gen3 uses IDR request here)
@@ -1607,7 +1617,7 @@ static void controlReceiveThreadFunc(void* context) {
 
             err = LastSocketFail();
             Limelog("Control stream connection failed: %d\n", err);
-            ListenerCallbacks.connectionTerminated(err);
+            ListenerCallbacks.connectionTerminated(controlTransportError(err));
             return;
         }
 
@@ -1878,7 +1888,7 @@ static void controlReceiveThreadFunc(void* context) {
         }
         else if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
             Limelog("Control stream received unexpected disconnect event\n");
-            ListenerCallbacks.connectionTerminated(-1);
+            ListenerCallbacks.connectionTerminated(controlTransportError(CONTROL_STREAM_GENERIC_ERROR));
             return;
         }
     }
@@ -1948,7 +1958,7 @@ static void lossStatsThreadFunc(void* context) {
                                       ENET_PACKET_FLAG_RELIABLE,
                                       false)) {
                 Limelog("Loss Stats: Transaction failed: %d\n", (int)LastSocketError());
-                ListenerCallbacks.connectionTerminated(LastSocketFail());
+                ListenerCallbacks.connectionTerminated(controlTransportError(LastSocketFail()));
                 return;
             }
 

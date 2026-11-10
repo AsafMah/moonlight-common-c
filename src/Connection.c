@@ -163,6 +163,8 @@ void LiStopConnection(void) {
         Limelog("done\n");
     }
     LC_ASSERT(stage == STAGE_NONE);
+    LiSetEndpointAutoRefreshEnabled(false);
+    EndpointRefreshRequested = false;
     
     if (RemoteAddrString != NULL) {
         free(RemoteAddrString);
