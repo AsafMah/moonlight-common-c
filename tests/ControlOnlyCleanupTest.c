@@ -4,7 +4,11 @@
 #include <stdio.h>
 
 static int avCalls, controlCalls, inputCalls, platformCalls;
+bool EndpointRefreshRequested;
 bool VideoFecControlSupported;
+void LiSetEndpointAutoRefreshEnabled(bool enabled) {
+    (void) enabled;
+}
 void LiClearStreamSockets(void) {}
 void destroyMicrophoneStream(void) {}
 int stopInputStream(void) { inputCalls++; return 0; }
