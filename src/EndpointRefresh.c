@@ -2,6 +2,19 @@
 #include "EndpointRefresh.h"
 #include <stdatomic.h>
 
+// Endpoint refresh timing and retry policy. These values are local state-machine
+// limits and are not part of the wire protocol.
+enum {
+    ENDPOINT_REFRESH_PROBE_INTERVAL_MS = 500,
+    ENDPOINT_REFRESH_RESPONSE_INTERVAL_MS = 250,
+    ENDPOINT_REFRESH_RECOVERY_TIMEOUT_MS = 2000,
+    ENDPOINT_REFRESH_STABLE_WINDOW_MS = 30000,
+    ENDPOINT_REFRESH_FAILURE_TIMEOUT_MS = 8000,
+    ENDPOINT_REFRESH_MAINTENANCE_INTERVAL_MS = 100,
+    ENDPOINT_REFRESH_SEQUENCE_WINDOW = 8,
+    ENDPOINT_REFRESH_MAX_ATTEMPTS = 3
+};
+
 bool EndpointRefreshRequested;
 static atomic_bool enabled;
 
@@ -60,7 +73,8 @@ void LiErClientDestroy(LI_ENDPOINT_REFRESH* state) {
 // repeated callers cannot turn normal keepalive into an unbounded send loop.
 static void sendProbe(LI_ENDPOINT_REFRESH* state, SOCKET socket, uint64_t now) {
     unsigned char packet[LI_ER_PACKET_SIZE];
-    if (socket == state->lastProbeSocket && now - state->lastProbeAt < 500) {
+    if (socket == state->lastProbeSocket &&
+        now - state->lastProbeAt < ENDPOINT_REFRESH_PROBE_INTERVAL_MS) {
         return;
     }
     if (state->sequence != UINT64_MAX && LiErEncode(packet, LI_ER_PROBE, state->stream,
@@ -92,14 +106,16 @@ static void handle(LI_ENDPOINT_REFRESH* state, SOCKET socket, const void* packet
     LI_ER_MESSAGE message;
     unsigned char response[LI_ER_PACKET_SIZE];
     if (!LiErDecode(packet, size, state->stream, state->session, state->key, &message) ||
-        message.sequence > state->sequence || state->sequence - message.sequence > 8) {
+        message.sequence > state->sequence ||
+        state->sequence - message.sequence > ENDPOINT_REFRESH_SEQUENCE_WINDOW) {
         return;
     }
     if (message.type == LI_ER_CHALLENGE &&
         (message.sequence > state->ackSequence ||
          (socket == state->candidate && message.sequence >= state->candidateFirstSequence))) {
         uint64_t* responseAt = socket == state->candidate ? &state->candidateResponseAt : &state->activeResponseAt;
-        if (*responseAt != UINT64_MAX && now - *responseAt < 250) {
+        if (*responseAt != UINT64_MAX &&
+            now - *responseAt < ENDPOINT_REFRESH_RESPONSE_INTERVAL_MS) {
             return;
         }
         if (socket == state->candidate) {
@@ -141,16 +157,17 @@ void LiErClientMedia(LI_ENDPOINT_REFRESH* state) {
 static bool maintain(LI_ENDPOINT_REFRESH* state, uint64_t now) {
     // Reuse the previous receive timestamp, after the caller has accepted or
     // rejected its RTP packet. No extra per-packet clock read or worker needed.
-    if (now - state->lastPoll < 100) {
+    if (now - state->lastPoll < ENDPOINT_REFRESH_MAINTENANCE_INTERVAL_MS) {
         return true;
     }
     state->lastPoll = now;
     PltLockMutex(&state->mutex);
-    if (now - state->lastAck < 2000 && now - state->lastMedia < 2000) {
+    if (now - state->lastAck < ENDPOINT_REFRESH_RECOVERY_TIMEOUT_MS &&
+        now - state->lastMedia < ENDPOINT_REFRESH_RECOVERY_TIMEOUT_MS) {
         if (!state->stableSince) {
             state->stableSince = now;
         }
-        if (now - state->stableSince >= 30000) {
+        if (now - state->stableSince >= ENDPOINT_REFRESH_STABLE_WINDOW_MS) {
             state->attempts = 0;
         }
     }
@@ -158,13 +175,15 @@ static bool maintain(LI_ENDPOINT_REFRESH* state, uint64_t now) {
         state->stableSince = 0;
     }
     if (state->candidate != INVALID_SOCKET) {
-        if (now - state->candidateStarted >= 2000) {
+        if (now - state->candidateStarted >= ENDPOINT_REFRESH_RECOVERY_TIMEOUT_MS) {
             closeSocket(state->candidate);
             state->candidate = INVALID_SOCKET;
         }
     }
-    if (state->candidate == INVALID_SOCKET && state->attempts < 3 &&
-        now - state->lastAck >= 2000 && now - state->lastMedia >= 2000) {
+    if (state->candidate == INVALID_SOCKET &&
+        state->attempts < ENDPOINT_REFRESH_MAX_ATTEMPTS &&
+        now - state->lastAck >= ENDPOINT_REFRESH_RECOVERY_TIMEOUT_MS &&
+        now - state->lastMedia >= ENDPOINT_REFRESH_RECOVERY_TIMEOUT_MS) {
         state->candidate = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen, state->bufferSize, state->qos);
         state->attempts++;
         if (state->candidate != INVALID_SOCKET) {
@@ -186,8 +205,10 @@ static bool maintain(LI_ENDPOINT_REFRESH* state, uint64_t now) {
         }
     }
     {
-        bool exhausted = state->candidate == INVALID_SOCKET && state->attempts >= 3 &&
-            now - state->lastAck >= 8000 && now - state->lastMedia >= 8000;
+        bool exhausted = state->candidate == INVALID_SOCKET &&
+            state->attempts >= ENDPOINT_REFRESH_MAX_ATTEMPTS &&
+            now - state->lastAck >= ENDPOINT_REFRESH_FAILURE_TIMEOUT_MS &&
+            now - state->lastMedia >= ENDPOINT_REFRESH_FAILURE_TIMEOUT_MS;
         state->failed = exhausted;
         PltUnlockMutex(&state->mutex);
         return !exhausted;

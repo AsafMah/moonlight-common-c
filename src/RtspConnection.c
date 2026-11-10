@@ -55,7 +55,7 @@ static bool endpointHeaderEqual(const char* a, const char* b) {
 
 static bool endpointRefreshConfirmed(POPTION_ITEM options) {
     const char* value = NULL;
-    unsigned int count = 0;
+    size_t count = 0;
     for (; options; options = options->next) {
         if (endpointHeaderEqual(options->option, "X-SS-Endpoint-Auto-Refresh")) {
 #ifdef FLAG_DUPLICATE_OPTION

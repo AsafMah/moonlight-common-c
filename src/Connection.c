@@ -570,13 +570,9 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     }
     else {
         Limelog("Control-only mode: skipping audio stream initialization\n");
-<<<<<<< HEAD
         // Keep the stage counter aligned with the skipped audio-init stage so
         // cleanup still walks the same stage sequence.
         stage++;
-=======
-        stage++;  // Still increment stage to maintain continuity
->>>>>>> 168e0a7 (feat: support authenticated UDP endpoint refresh)
         LC_ASSERT(stage == STAGE_AUDIO_STREAM_INIT);
     }
 
