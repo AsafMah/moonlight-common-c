@@ -182,6 +182,7 @@ static CURSOR_STREAM_STATE cursorReassembly;
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
+#define CONTROL_STREAM_GENERIC_ERROR (-1)
 
 static const short packetTypesGen3[] = {
     0x1407, // Start A (Gen3 uses IDR request here)
@@ -1887,7 +1888,7 @@ static void controlReceiveThreadFunc(void* context) {
         }
         else if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
             Limelog("Control stream received unexpected disconnect event\n");
-            ListenerCallbacks.connectionTerminated(controlTransportError(-1));
+            ListenerCallbacks.connectionTerminated(controlTransportError(CONTROL_STREAM_GENERIC_ERROR));
             return;
         }
     }
