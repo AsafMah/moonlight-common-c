@@ -106,7 +106,9 @@ static void handle(LI_ENDPOINT_REFRESH* state, SOCKET socket, const void* packet
 
 void LiErClientMedia(LI_ENDPOINT_REFRESH* state) {
     // Only the receive worker reads/writes this field; never lock for RTP data.
-    if (!state->initialized) return;
+    if (!state->initialized) {
+        return;
+    }
     state->lastMedia = state->receiveTime;
 }
 
