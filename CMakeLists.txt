@@ -121,6 +121,14 @@ target_include_directories(moonlight-common-c SYSTEM PRIVATE
 target_compile_definitions(moonlight-common-c PRIVATE HAS_SOCKLEN_T)
 
 if (BUILD_TESTING)
+  add_executable(control-only-cleanup-tests tests/ControlOnlyCleanupTest.c)
+  target_include_directories(control-only-cleanup-tests PRIVATE src enet/include)
+  target_compile_definitions(control-only-cleanup-tests PRIVATE HAS_SOCKLEN_T)
+  if(MSVC)
+    target_compile_options(control-only-cleanup-tests PRIVATE /W3 /WX /experimental:c11atomics)
+  endif()
+  add_test(NAME control-only-cleanup-tests COMMAND control-only-cleanup-tests)
+
   add_executable(mat-live-tests tests/MatLiveTest.c src/MatLivePlayback.c src/MatReceiver.c src/MatDepacketizer.c)
   target_include_directories(mat-live-tests PRIVATE src)
   if(USE_MBEDTLS)
