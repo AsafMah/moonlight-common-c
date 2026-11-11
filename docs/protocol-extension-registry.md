@@ -39,6 +39,7 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `ML_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Tells the host that the client supports authenticated UDP endpoint migration v1. Activation also requires encrypted RTSP and `x-ml-general.endpointAutoRefreshVersion:1`. |
+| `ML_FF_HOST_RESTART` | `0x4000` | Tells the host that the client accepts the versioned host-restart termination protocol. |
 
 ## Host feature flags
 
@@ -74,6 +75,7 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `LI_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Advertises authenticated UDP endpoint migration v1. The host enables it only after the client requests version 1 over encrypted RTSP. |
+| `LI_FF_HOST_RESTART` | `0x4000` | Advertises support for the versioned host-restart termination protocol. |
 
 ## Assigned control opcodes
 
