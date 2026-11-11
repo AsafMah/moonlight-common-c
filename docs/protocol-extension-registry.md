@@ -40,6 +40,7 @@ next unused high bit before implementation and add it to this table.
 | --- | ---: | --- |
 | `ML_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Tells the host that the client supports authenticated UDP endpoint migration v1. Activation also requires encrypted RTSP and `x-ml-general.endpointAutoRefreshVersion:1`. |
 | `ML_FF_BITRATE_CALLBACK` | `0x4000` | Tells the host that the client accepts host-to-client runtime bitrate updates on opcode `0x5506` (subtype `2`, see below). It is set only for a host that advertises `LI_FF_BITRATE_CALLBACK`. Reserved: `common-c` does not offer it yet. |
+| `ML_FF_HOST_RESTART` | `0x1000` | Tells the host that the client accepts the versioned host-restart termination protocol. |
 
 ## Host feature flags
 
@@ -78,6 +79,7 @@ next unused high bit before implementation and add it to this table.
 | --- | ---: | --- |
 | `LI_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Advertises authenticated UDP endpoint migration v1. The host enables it only after the client requests version 1 over encrypted RTSP. |
 | `LI_FF_BITRATE_CALLBACK` | `0x4000` | Advertises host-to-client runtime bitrate updates on opcode `0x5506` (subtype `2`). The host sends them only to a client that set `ML_FF_BITRATE_CALLBACK`. Reserved: `0x400` is not used for this because the unmerged `LI_FF_CONTROLLER_HAPTICS` already holds it. |
+| `LI_FF_HOST_RESTART` | `0x1000` | Advertises support for the versioned host-restart termination protocol. |
 
 ## Assigned control opcodes
 
