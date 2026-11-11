@@ -38,7 +38,7 @@ next unused high bit before implementation and add it to this table.
 
 | Identifier | Value | Used for |
 | --- | ---: | --- |
-| `ML_FF_HOST_RESTART` | `0x8000` | Tells the host that the client accepts the versioned host-restart termination protocol. |
+| `ML_FF_HOST_RESTART` | `0x4000` | Tells the host that the client accepts the versioned host-restart termination protocol. |
 
 ## Host feature flags
 
@@ -64,6 +64,7 @@ reused or renumbered.
 | `LI_FF_DS5_HAPTICS_PCM` | `0x80` | Advertises authored DualSense stereo PCM haptics from the host. |
 | `LI_FF_DYNAMIC_SDR_WHITE` | `0x100` | Advertises runtime client SDR reference-white updates. |
 | `LI_FF_REMOTE_TEXT_CONTEXT` | `0x200` | Advertises host support for remote editable-text focus context updates. |
+| `LI_FF_CLIENT_RESOLUTION_CHANGE` | `0x400` | Advertises live client resolution change requests. |
 | `LI_FF_HOST_SESSION_STATE` | `0x800` | Advertises host lock-state notifications so the client can react to a locked desktop. |
 
 ### New fork assignments
@@ -73,7 +74,7 @@ next unused high bit before implementation and add it to this table.
 
 | Identifier | Value | Used for |
 | --- | ---: | --- |
-| `LI_FF_HOST_RESTART` | `0x8000` | Advertises support for the versioned host-restart termination protocol. |
+| `LI_FF_HOST_RESTART` | `0x4000` | Advertises support for the versioned host-restart termination protocol. |
 
 ## Assigned control opcodes
 
@@ -106,6 +107,13 @@ direction, version, and lifecycle in the common-c headers and this registry.
 These values must not be used for feature flags.
 
 ## Compatibility contract
+
+The private host-restart flags moved from `0x8000` to `0x4000` to avoid the
+endpoint-auto-refresh allocation. Hosts and clients using restart intent must
+upgrade together; do not treat the old `0x8000` bit as restart support.
+
+Run `python tests/test_protocol_registry.py` to check flag uniqueness and header
+coverage. CI enforces this gate. Reserved registry rows may precede implementation.
 
 Feature bits are hints and must not be the only activation condition for a new
 protocol. New features must carry an explicit version or capability attribute,

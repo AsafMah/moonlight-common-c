@@ -63,6 +63,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check protocol flag allocations
+        run: python3 tests/test_protocol_registry.py
+
       - name: Prebuild
         if: matrix.prebuild_cmd
         run: |
