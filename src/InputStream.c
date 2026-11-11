@@ -673,15 +673,22 @@ static void inputSendThreadProc(void* context) {
                 // have been processed prior to sending these UTF-8 events to avoid interference between
                 // the two (especially with modifier keys).
                 flushInputOnControlStream();
-                while (!PltIsThreadInterrupted(&inputSendThread) && isControlDataInTransit()) {
+                while (!ConnectionInterrupted && !PltIsThreadInterrupted(&inputSendThread) && isControlDataInTransit()) {
                     PltSleepMs(10);
+                }
+
+                // stopInputStream() drains the queue rather than interrupting this thread.
+                // Do not wait for host ACKs during teardown, but keep draining key releases.
+                if (ConnectionInterrupted) {
+                    freePacketHolder(holder);
+                    continue;
                 }
 
                 // Finally, sleep an additional 50 ms to allow the events to be processed by Windows
                 PltSleepMs(50);
             }
 
-            while (i < totalLength && !PltIsThreadInterrupted(&inputSendThread)) {
+            while (i < totalLength && !ConnectionInterrupted && !PltIsThreadInterrupted(&inputSendThread)) {
                 uint32_t chunkLength = 0;
                 uint32_t remaining = totalLength - i;
 

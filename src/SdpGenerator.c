@@ -275,6 +275,10 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     if (IS_SUNSHINE()) {
         // Send client feature flags to Sunshine hosts
         uint32_t moonlightFeatureFlags = ML_FF_FEC_STATUS | ML_FF_SESSION_ID_V1;
+        if (EndpointRefreshRequested) {
+            moonlightFeatureFlags |= ML_FF_ENDPOINT_AUTO_REFRESH;
+            err |= addAttributeString(&optionHead, "x-ml-general.endpointAutoRefreshVersion", "1");
+        }
         if (ListenerCallbacks.ds5HapticsPcm != NULL) {
             moonlightFeatureFlags |= ML_FF_DS5_HAPTICS_PCM;
             if (Ds5HapticsStateCallback != NULL) {
@@ -283,6 +287,10 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         }
         if (ListenerCallbacks.ds5HapticsIrV2 != NULL) {
             moonlightFeatureFlags |= ML_FF_DS5_HAPTICS_IR_V2;
+        }
+        if (ListenerCallbacks.ds5HapticsIrV2 != NULL && ListenerCallbacks.ds5HapticsIrExtended != NULL) {
+            // Enhancement is optional and requires the existing v2 base capability.
+            moonlightFeatureFlags |= ML_FF_DS5_HAPTICS_IR_EXTENDED;
         }
         if (RemoteTextContextCallback != NULL) {
             moonlightFeatureFlags |= ML_FF_REMOTE_TEXT_CONTEXT;
@@ -299,6 +307,9 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
                 moonlightFeatureFlags |= ML_FF_HOST_RESTART;
                 HostRestartNegotiated = true;
             }
+        }
+        if (HostSessionStateCallback != NULL) {
+            moonlightFeatureFlags |= ML_FF_HOST_SESSION_STATE;
         }
         if ((StreamConfig.supportedVideoFormats & VIDEO_FORMAT_PYROWAVE) != 0 &&
                 (VideoCallbacks.capabilities & CAPABILITY_PYROWAVE) != 0) {

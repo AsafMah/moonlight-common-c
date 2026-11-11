@@ -119,14 +119,20 @@ extern uint32_t EncryptionFeaturesEnabled;
 #define ML_FF_SESSION_ID_V1 0x02 // Client supports X-SS-Ping-Payload and X-SS-Connect-Data
 #define ML_FF_DS5_HAPTICS_PCM 0x04 // Client accepts authored DualSense PCM on the control stream
 #define ML_FF_DS5_HAPTICS_IR_V2 0x08 // Client selected simulated DualSense and accepts authored IR v2
+#define ML_FF_DS5_HAPTICS_IR_EXTENDED 0x80 // Client accepts continuous-state/source-event v2 IR enhancement (0x550B)
 #define ML_FF_REMOTE_TEXT_CONTEXT 0x10 // Client accepts remote text context updates
 #define ML_FF_PYROWAVE 0x20 // Client accepts the experimental PyroWave video contract
 #define ML_FF_DS5_HAPTICS_STATE 0x40 // Client accepts absolute DS5 actuator controls (0x550D)
+#define ML_FF_HOST_SESSION_STATE 0x100 // Client accepts host session lock state updates (0x550E)
 extern ConnListenerDs5HapticsState Ds5HapticsStateCallback;
 extern bool HostRestartRecoveryEnabled;
 extern bool HostRestartHostSupported;
 extern bool HostRestartNegotiated;
 bool liIsHostRestartProtocolSupported(const char* sdp, bool isSunshine);
+extern ConnListenerHostSessionState HostSessionStateCallback;
+#define ML_FF_ENDPOINT_AUTO_REFRESH 0x8000 // Client requests authenticated endpoint migration v1
+extern bool EndpointRefreshRequested;
+void LiSetEndpointAutoRefreshEnabled(bool enabled);
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 

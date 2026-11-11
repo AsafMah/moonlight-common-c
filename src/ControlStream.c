@@ -4,15 +4,21 @@
 #include "Ds5HapticsStream.h"
 #include "Ds5HapticsStateStream.h"
 #include "Ds5HapticsIrStream.h"
+#include "HostSessionStateStream.h"
 #include "RemoteTextContextStream.h"
 
 #include <math.h>
 #include <stdatomic.h>
 
 ConnListenerDs5HapticsState Ds5HapticsStateCallback;
+ConnListenerHostSessionState HostSessionStateCallback;
 
 void LiSetDs5HapticsStateCallback(ConnListenerDs5HapticsState callback) {
     Ds5HapticsStateCallback = callback;
+}
+
+void LiSetHostSessionStateCallback(ConnListenerHostSessionState callback) {
+    HostSessionStateCallback = callback;
 }
 
 // This is a private header, but it just contains some time macros
@@ -126,6 +132,15 @@ static PLT_EVENT idrFrameRequiredEvent;
 static PPLT_CRYPTO_CONTEXT encryptionCtx;
 static PPLT_CRYPTO_CONTEXT decryptionCtx;
 
+// In control-only mode, endpoint refresh is the only media-side signal that
+// can distinguish a transport timeout from a generic control failure.
+static int controlTransportError(int fallback) {
+    if (StreamConfig.controlOnly && LiIsEndpointAutoRefreshEnabled()) {
+        return ML_ERROR_CONTROL_TRANSPORT_TIMEOUT;
+    }
+    return fallback;
+}
+
 #define CONN_IMMEDIATE_POOR_LOSS_RATE 30
 #define CONN_CONSECUTIVE_POOR_LOSS_RATE 15
 #define CONN_OKAY_LOSS_RATE 5
@@ -167,6 +182,7 @@ static CURSOR_STREAM_STATE cursorReassembly;
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
+#define CONTROL_STREAM_GENERIC_ERROR (-1)
 
 static const short packetTypesGen3[] = {
     0x1407, // Start A (Gen3 uses IDR request here)
@@ -1510,6 +1526,11 @@ static void dispatchDs5HapticsIrV2(const LI_DS5_HAPTICS_IR_FRAME_V2* frame, void
     ListenerCallbacks.ds5HapticsIrV2(frame);
 }
 
+static void dispatchDs5HapticsIrExtended(const LI_DS5_HAPTICS_IR_EXTENDED_FRAME* frame, void* context) {
+    (void)context;
+    ListenerCallbacks.ds5HapticsIrExtended(frame);
+}
+
 static void processRemoteTextContext(const uint8_t* payload, int payloadLength) {
     LI_REMOTE_TEXT_CONTEXT context;
 
@@ -1659,7 +1680,7 @@ static void controlReceiveThreadFunc(void* context) {
 
             err = LastSocketFail();
             Limelog("Control stream connection failed: %d\n", err);
-            ListenerCallbacks.connectionTerminated(err);
+            ListenerCallbacks.connectionTerminated(controlTransportError(err));
             return;
         }
 
@@ -1811,6 +1832,14 @@ static void controlReceiveThreadFunc(void* context) {
                     Ds5HapticsStateCallback(controller, state);
                 }
             }
+            else if (ctlHdr->type == 0x550E) {
+                uint8_t sessionState;
+                if (HostSessionStateCallback != NULL && parseHostSessionState(
+                        (const uint8_t*)(ctlHdr + 1), packetLength - (int)sizeof(*ctlHdr),
+                        &sessionState)) {
+                    HostSessionStateCallback(sessionState);
+                }
+            }
             else if (ctlHdr->type == packetTypes[IDX_DS5_HAPTICS_PCM]) {
                 if (ListenerCallbacks.ds5HapticsPcm != NULL &&
                         packetLength > (int)sizeof(*ctlHdr)) {
@@ -1821,12 +1850,16 @@ static void controlReceiveThreadFunc(void* context) {
                 }
             }
             else if (ctlHdr->type == packetTypes[IDX_DS5_HAPTICS_IR_V2]) {
-                if (ListenerCallbacks.ds5HapticsIrV2 != NULL &&
-                        packetLength > (int)sizeof(*ctlHdr)) {
-                    processDs5HapticsIrStreamPacket((const uint8_t*)(ctlHdr + 1),
-                                                    packetLength - (int)sizeof(*ctlHdr),
-                                                    dispatchDs5HapticsIrV2,
-                                                    NULL);
+                if (ListenerCallbacks.ds5HapticsIrV2 != NULL && packetLength > (int)sizeof(*ctlHdr)) {
+                    const uint8_t* irPayload = (const uint8_t*)(ctlHdr + 1);
+                    const int irLength = packetLength - (int)sizeof(*ctlHdr);
+                    if (irLength == DS5_HAPTICS_IR_STREAM_WIRE_SIZE) {
+                        processDs5HapticsIrStreamPacket(irPayload, irLength, dispatchDs5HapticsIrV2, NULL);
+                    }
+                    else if (ListenerCallbacks.ds5HapticsIrExtended != NULL) {
+                        processDs5HapticsIrExtendedStreamPacket(irPayload, irLength,
+                                                               dispatchDs5HapticsIrExtended, NULL);
+                    }
                 }
             }
             else if (ctlHdr->type == packetTypes[IDX_REMOTE_TEXT_CONTEXT]) {
@@ -1887,7 +1920,7 @@ static void controlReceiveThreadFunc(void* context) {
         }
         else if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
             Limelog("Control stream received unexpected disconnect event\n");
-            ListenerCallbacks.connectionTerminated(-1);
+            ListenerCallbacks.connectionTerminated(controlTransportError(CONTROL_STREAM_GENERIC_ERROR));
             return;
         }
     }
@@ -1957,7 +1990,7 @@ static void lossStatsThreadFunc(void* context) {
                                       ENET_PACKET_FLAG_RELIABLE,
                                       false)) {
                 Limelog("Loss Stats: Transaction failed: %d\n", (int)LastSocketError());
-                ListenerCallbacks.connectionTerminated(LastSocketFail());
+                ListenerCallbacks.connectionTerminated(controlTransportError(LastSocketFail()));
                 return;
             }
 
@@ -2255,6 +2288,28 @@ int LiSendClipboardData(const void* payload, int length) {
     }
 
     return 0;
+}
+
+int LiRequestResolutionChange(int width, int height) {
+    uint32_t payload[3];
+
+    if (width <= 0 || height <= 0 || width > 16384 || height > 16384 ||
+            (width & 1) || (height & 1)) {
+        return -1;
+    }
+    if (!IS_SUNSHINE() || !encryptedControlStream || AppVersionQuad[0] < 5 ||
+            packetTypes == NULL || packetTypes[IDX_DYNAMIC_PARAM_CHANGE] == -1) {
+        return -2;
+    }
+    if (stopping || peer == NULL || peer->state != ENET_PEER_STATE_CONNECTED) {
+        return -3;
+    }
+
+    payload[0] = LE32(SS_DYNAMIC_PARAM_TYPE_RESOLUTION);
+    payload[1] = LE32((uint32_t)width);
+    payload[2] = LE32((uint32_t)height);
+    return sendMessageAndForget(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], sizeof(payload), payload,
+                                CTRL_CHANNEL_GENERIC, ENET_PACKET_FLAG_RELIABLE, false) ? 0 : -4;
 }
 
 int LiSendClientSdrWhiteNits(float nits) {
