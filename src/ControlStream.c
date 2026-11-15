@@ -113,6 +113,8 @@ static uint32_t currentResolutionHeight = 0;
 
 // Sunshine unified dynamic parameter change payload types (see Sunshine src/video.h)
 #define SS_DYNAMIC_PARAM_TYPE_RESOLUTION 0
+#define SS_DYNAMIC_PARAM_TYPE_FPS 1
+#define SS_DYNAMIC_PARAM_TYPE_BITRATE 2
 #define SS_DYNAMIC_PARAM_TYPE_CLIENT_SDR_WHITE_NITS 9
 
 static int intervalGoodFrameCount;
@@ -2273,6 +2275,42 @@ int LiRequestResolutionChange(int width, int height) {
     payload[2] = LE32((uint32_t)height);
     return sendMessageAndForget(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], sizeof(payload), payload,
                                 CTRL_CHANNEL_GENERIC, ENET_PACKET_FLAG_RELIABLE, false) ? 0 : -4;
+}
+
+// Sends a single-value dynamic parameter (0x5506): the subtype word followed by
+// one 32-bit value. Applies the same gates as LiRequestResolutionChange().
+static int sendDynamicParam(uint32_t subtype, uint32_t value) {
+    uint32_t payload[2];
+
+    if (!IS_SUNSHINE() || !encryptedControlStream || AppVersionQuad[0] < 5 ||
+            packetTypes == NULL || packetTypes[IDX_DYNAMIC_PARAM_CHANGE] == -1) {
+        return -2;
+    }
+    if (stopping || peer == NULL || peer->state != ENET_PEER_STATE_CONNECTED) {
+        return -3;
+    }
+
+    payload[0] = LE32(subtype);
+    payload[1] = LE32(value);
+    return sendMessageAndForget(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], sizeof(payload), payload,
+                                CTRL_CHANNEL_GENERIC, ENET_PACKET_FLAG_RELIABLE, false) ? 0 : -4;
+}
+
+int LiSendStreamBitrate(int kbps) {
+    if (kbps < 1 || kbps > LI_STREAM_BITRATE_MAX_KBPS) {
+        return -1;
+    }
+    return sendDynamicParam(SS_DYNAMIC_PARAM_TYPE_BITRATE, (uint32_t)kbps);
+}
+
+int LiSendStreamFramerate(float fps) {
+    uint32_t bits;
+
+    if (!isfinite(fps) || fps <= 0.0f || fps > LI_STREAM_FRAMERATE_MAX) {
+        return -1;
+    }
+    memcpy(&bits, &fps, sizeof(bits));
+    return sendDynamicParam(SS_DYNAMIC_PARAM_TYPE_FPS, bits);
 }
 
 int LiSendClientSdrWhiteNits(float nits) {

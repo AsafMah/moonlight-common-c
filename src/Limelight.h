@@ -1440,6 +1440,17 @@ int LiSendClientSdrWhiteNits(float nits);
 // -1: invalid dimensions; -2: unsupported host; -3: disconnected; -4: send failed.
 int LiRequestResolutionChange(int width, int height);
 
+// Foundation Sunshine extensions on the same dynamic parameter message (0x5506)
+// as LiRequestResolutionChange(). LiSendStreamBitrate() asks for a new video
+// bitrate in kbps (1 to LI_STREAM_BITRATE_MAX_KBPS) and LiSendStreamFramerate()
+// for a new frame rate (greater than 0, at most LI_STREAM_FRAMERATE_MAX). Zero
+// means sent, not applied. -1: value out of range; -2: unsupported host;
+// -3: disconnected; -4: send failed. See docs/protocol-extension-registry.md.
+#define LI_STREAM_BITRATE_MAX_KBPS 800000
+#define LI_STREAM_FRAMERATE_MAX 1000
+int LiSendStreamBitrate(int kbps);
+int LiSendStreamFramerate(float fps);
+
 // Select whether Sunshine composites the cursor into the video frame or sends
 // cursor shape updates for local rendering. This is only supported when the
 // host advertises LI_FF_CURSOR_SHAPE.
