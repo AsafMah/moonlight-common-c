@@ -39,7 +39,7 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `ML_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Tells the host that the client supports authenticated UDP endpoint migration v1. Activation also requires encrypted RTSP and `x-ml-general.endpointAutoRefreshVersion:1`. |
-| `ML_FF_HOST_RESTART` | `0x4000` | Tells the host that the client accepts the versioned host-restart termination protocol. |
+| `ML_FF_HOST_RESTART` | `0x1000` | Tells the host that the client accepts the versioned host-restart termination protocol. |
 
 ## Host feature flags
 
@@ -76,7 +76,7 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `LI_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Advertises authenticated UDP endpoint migration v1. The host enables it only after the client requests version 1 over encrypted RTSP. |
-| `LI_FF_HOST_RESTART` | `0x4000` | Advertises support for the versioned host-restart termination protocol. |
+| `LI_FF_HOST_RESTART` | `0x1000` | Advertises support for the versioned host-restart termination protocol. |
 
 ## Assigned control opcodes
 
@@ -110,9 +110,9 @@ These values must not be used for feature flags.
 
 ## Compatibility contract
 
-The private host-restart flags moved from `0x8000` to `0x4000` to avoid the
-endpoint-auto-refresh allocation. Hosts and clients using restart intent must
-upgrade together; do not treat the old `0x8000` bit as restart support.
+The private host-restart flags moved from `0x8000`, then `0x4000`, to `0x1000`
+to avoid endpoint-auto-refresh and bitrate-callback allocations. Hosts and clients
+using restart intent must upgrade together; neither former bit signals restart.
 
 Run `python tests/test_protocol_registry.py` to check flag uniqueness and header
 coverage. CI enforces this gate. Reserved registry rows may precede implementation.
