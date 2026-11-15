@@ -39,6 +39,7 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `ML_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Tells the host that the client supports authenticated UDP endpoint migration v1. Activation also requires encrypted RTSP and `x-ml-general.endpointAutoRefreshVersion:1`. |
+| `ML_FF_BITRATE_CALLBACK` | `0x4000` | Reserved for host-to-client runtime bitrate updates on opcode `0x5506`; this branch does not offer it. |
 | `ML_FF_HOST_RESTART` | `0x1000` | Tells the host that the client accepts the versioned host-restart termination protocol. |
 
 ## Host feature flags
@@ -65,7 +66,6 @@ reused or renumbered.
 | `LI_FF_DS5_HAPTICS_PCM` | `0x80` | Advertises authored DualSense stereo PCM haptics from the host. |
 | `LI_FF_DYNAMIC_SDR_WHITE` | `0x100` | Advertises runtime client SDR reference-white updates. |
 | `LI_FF_REMOTE_TEXT_CONTEXT` | `0x200` | Advertises host support for remote editable-text focus context updates. |
-| `LI_FF_CLIENT_RESOLUTION_CHANGE` | `0x400` | Advertises live client resolution change requests. |
 | `LI_FF_HOST_SESSION_STATE` | `0x800` | Advertises host lock-state notifications so the client can react to a locked desktop. |
 
 ### New fork assignments
@@ -76,6 +76,8 @@ next unused high bit before implementation and add it to this table.
 | Identifier | Value | Used for |
 | --- | ---: | --- |
 | `LI_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Advertises authenticated UDP endpoint migration v1. The host enables it only after the client requests version 1 over encrypted RTSP. |
+| `LI_FF_BITRATE_CALLBACK` | `0x4000` | Reserved for host-to-client runtime bitrate updates on opcode `0x5506`. |
+| `LI_FF_CLIENT_RESOLUTION_CHANGE` | `0x2000` | Advertises live client resolution change requests. |
 | `LI_FF_HOST_RESTART` | `0x1000` | Advertises support for the versioned host-restart termination protocol. |
 
 ## Assigned control opcodes
@@ -113,6 +115,8 @@ These values must not be used for feature flags.
 The private host-restart flags moved from `0x8000`, then `0x4000`, to `0x1000`
 to avoid endpoint-auto-refresh and bitrate-callback allocations. Hosts and clients
 using restart intent must upgrade together; neither former bit signals restart.
+The resolution-change flag moved from `0x400` to `0x2000`; clients using the
+gated request API require a host advertising the new bit.
 
 Run `python tests/test_protocol_registry.py` to check flag uniqueness and header
 coverage. CI enforces this gate. Reserved registry rows may precede implementation.

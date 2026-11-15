@@ -76,7 +76,7 @@ int main(void) {
     AppVersionQuad[3] = -1;
     CHECK(initializeControlStream() == 0);
     CHECK(packetTypes == packetTypesGen7Enc);
-    CHECK(LI_FF_CLIENT_RESOLUTION_CHANGE == 0x400); // Must match the host's bit
+    CHECK(LI_FF_CLIENT_RESOLUTION_CHANGE == 0x2000); // Must match the host's bit
     SunshineFeatureFlags = LI_FF_CLIENT_RESOLUTION_CHANGE;
 
     // Plaintext framing lets the host side read the payload without a session key.
@@ -91,13 +91,17 @@ int main(void) {
     CHECK(LiSendResolutionChangeRequest(16386, 720) == LI_RESOLUTION_CHANGE_ERR_INVALID);
     CHECK(LiSendResolutionChangeRequest(1280, 16386) == LI_RESOLUTION_CHANGE_ERR_INVALID);
 
-    AppVersionQuad[3] = 0; // A non-Sunshine host cannot enable the API by spoofing 0x400.
+    AppVersionQuad[3] = 0; // A non-Sunshine host cannot enable the API by spoofing the flag.
     CHECK(LiSendResolutionChangeRequest(1280, 720) == LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED);
     AppVersionQuad[3] = -1;
 
     SunshineFeatureFlags = ~(uint32_t)LI_FF_CLIENT_RESOLUTION_CHANGE;
     CHECK(LiSendResolutionChangeRequest(1280, 720) == LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED);
-    SunshineFeatureFlags = LI_FF_CLIENT_RESOLUTION_CHANGE;
+    SunshineFeatureFlags = 0x400;
+    CHECK(LiSendResolutionChangeRequest(1280, 720) == LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED);
+    SunshineFeatureFlags = LI_FF_HOST_RESTART;
+    CHECK(LiSendResolutionChangeRequest(1280, 720) == LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED);
+    SunshineFeatureFlags = 0x2000 | LI_FF_HOST_RESTART;
 
     packetTypes = (short*)packetTypesGen7; // No 0x5506 without the encrypted control stream
     CHECK(LiSendResolutionChangeRequest(1280, 720) == LI_RESOLUTION_CHANGE_ERR_UNSUPPORTED);
