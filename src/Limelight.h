@@ -1420,6 +1420,7 @@ void LiRequestIdrFrame(void);
 #define LI_FF_HOST_SESSION_STATE      0x800 // Host can report its session lock state
 #define LI_FF_ENDPOINT_AUTO_REFRESH  0x8000 // Authenticated UDP endpoint migration v1
 #define LI_FF_BITRATE_CALLBACK       0x4000 // Reserved: host pushes runtime bitrate updates on 0x5506
+#define LI_FF_CLIENT_RESOLUTION_CHANGE 0x2000 // Host applies LiRequestResolutionChange() requests
 // True only for a live session with explicit encrypted-RTSP confirmation.
 bool LiIsEndpointAutoRefreshEnabled(void);
 uint32_t LiGetHostFeatureFlags(void);
@@ -1437,6 +1438,8 @@ int LiSendClientSdrWhiteNits(float nits);
 
 // Foundation Sunshine extension. Zero means sent, not applied; clients must
 // observe a frame at the requested dimensions and reconnect on timeout.
+// Hosts that advertise LI_FF_CLIENT_RESOLUTION_CHANGE in LiGetHostFeatureFlags()
+// apply requests; check it first to skip requests the host would ignore.
 // -1: invalid dimensions; -2: unsupported host; -3: disconnected; -4: send failed.
 int LiRequestResolutionChange(int width, int height);
 

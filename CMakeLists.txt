@@ -244,6 +244,16 @@ if (BUILD_TESTING)
     endif()
     add_test(NAME stream-runtime-param-tests COMMAND stream-runtime-param-tests)
     set_tests_properties(stream-runtime-param-tests PROPERTIES TIMEOUT 20)
+    # Includes ControlStream.c to drive LiRequestResolutionChange() over loopback ENet.
+    add_executable(resolution-change-request-tests tests/ResolutionChangeRequestTest.c)
+    target_include_directories(resolution-change-request-tests PRIVATE
+      enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(resolution-change-request-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_DEFINITIONS>)
+    target_compile_options(resolution-change-request-tests PRIVATE
+      $<TARGET_PROPERTY:moonlight-common-c,COMPILE_OPTIONS>)
+    target_link_libraries(resolution-change-request-tests PRIVATE moonlight-common-c)
+    add_test(NAME resolution-change-request-tests COMMAND resolution-change-request-tests)
     add_executable(pyrowave-decode-unit-tests tests/PyrowaveDecodeUnitTest.c)
     target_include_directories(pyrowave-decode-unit-tests PRIVATE
       enet/include $<TARGET_PROPERTY:moonlight-common-c,INCLUDE_DIRECTORIES>)
