@@ -78,6 +78,7 @@ next unused high bit before implementation and add it to this table.
 | --- | ---: | --- |
 | `LI_FF_ENDPOINT_AUTO_REFRESH` | `0x8000` | Advertises authenticated UDP endpoint migration v1. The host enables it only after the client requests version 1 over encrypted RTSP. |
 | `LI_FF_BITRATE_CALLBACK` | `0x4000` | Advertises host-to-client runtime bitrate updates on opcode `0x5506` (subtype `2`). The host sends them only to a client that set `ML_FF_BITRATE_CALLBACK`. Reserved: `0x400` is not used for this because the unmerged `LI_FF_CONTROLLER_HAPTICS` already holds it. |
+| `LI_FF_CLIENT_RESOLUTION_CHANGE` | `0x2000` | Advertises that the host applies `LiRequestResolutionChange()` (`0x5506` RESOLUTION) requests for the session. Advisory: the sender does not require it. |
 
 ## Assigned control opcodes
 
