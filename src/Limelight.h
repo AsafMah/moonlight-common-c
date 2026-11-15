@@ -1420,6 +1420,8 @@ void LiRequestIdrFrame(void);
 #define LI_FF_HOST_SESSION_STATE      0x800 // Host can report its session lock state
 #define LI_FF_ENDPOINT_AUTO_REFRESH  0x8000 // Authenticated UDP endpoint migration v1
 #define LI_FF_BITRATE_CALLBACK       0x4000 // Reserved: host pushes runtime bitrate updates on 0x5506
+#define LI_FF_HOST_RESTART           0x1000 // Reserved: host supports the restart-intent protocol
+#define ML_FF_HOST_RESTART           0x1000 // Reserved: client accepts the restart-intent protocol
 // True only for a live session with explicit encrypted-RTSP confirmation.
 bool LiIsEndpointAutoRefreshEnabled(void);
 uint32_t LiGetHostFeatureFlags(void);
